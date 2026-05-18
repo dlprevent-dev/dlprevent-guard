@@ -803,6 +803,11 @@ const Keys = () => {
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <Badge status={k.is_active ? "ok" : "neutral"}>{k.is_active ? "active" : "revoked"}</Badge>
                   {k.is_admin && <Badge status="warn" title="Allowed to send custom system_prompt">admin</Badge>}
+                  {(aliasCountByKey[k.id] ?? 0) > 0 && (
+                    <Badge status="info" title={`Unified gateway — ${aliasCountByKey[k.id]} extra model(s) attached`}>
+                      +{aliasCountByKey[k.id]} model{aliasCountByKey[k.id] === 1 ? "" : "s"}
+                    </Badge>
+                  )}
                 </div>
                 <div className="flex items-center gap-1 justify-end">
                   {k.is_active && (
