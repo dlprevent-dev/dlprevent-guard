@@ -563,6 +563,22 @@ const Playground = () => {
                       Create AnveGuard key for "{selectedEndpoint.name}"
                     </Button>
                   </div>
+                {selectedKey && (
+                  <div className="mt-3 flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => send({ promptOverride: SAMPLE_TEST_PROMPT, streamOverride: false, isTest: true })}
+                      disabled={sendDisabled}
+                      title="Send a tiny canned request through the bound endpoint to verify the connection."
+                    >
+                      <Plug className="h-3.5 w-3.5" />
+                      {loading ? "Testing…" : "Test connection"}
+                    </Button>
+                    <span className="text-meta text-muted-foreground">
+                      Fires <code className="font-mono text-[10px]">pong</code> through the proxy to verify upstream + auth.
+                    </span>
+                  </div>
                 )}
               </div>
             )}
