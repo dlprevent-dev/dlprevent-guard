@@ -1,0 +1,77 @@
+# AnveGuard — Full content index for AI crawlers
+# https://guard.citerlabs.com
+# Last updated: 2026-05-18
+# License: CC-BY-4.0 with attribution
+
+## Product
+
+AnveGuard is a drop-in proxy for the OpenAI Chat Completions API. It runs as an Edge Function in front of any OpenAI-compatible LLM provider and gives operators a single console to inspect, govern, and audit every AI request their team makes. The application code only ever sees an AnveGuard endpoint and an AnveGuard API key — upstream provider keys live in the AnveGuard dashboard, encrypted with AES-GCM using a workspace-derived key.
+
+## Capabilities
+
+### Drop-in proxy
+The AnveGuard endpoint speaks the OpenAI Chat Completions wire protocol verbatim. Any SDK or client that targets OpenAI works without modification — change only the base URL and the API key. The official OpenAI SDKs in Python, Node, and Go all work, as do any third-party tools that accept an OpenAI-compatible endpoint.
+
+### Multi-provider routing
+Routes map a model alias to one or more upstream providers. When a request matches a route, AnveGuard sends it to the primary provider and falls back to the next provider on error or timeout. Providers include OpenAI, Anthropic, Google, OpenRouter, Perplexity, Ollama, and any self-hosted OpenAI-compatible endpoint.
+
+### Policy enforcement
+Policies are first-class objects attached to API keys or routes. Each policy is a keyword, regex, or structural rule that runs on the request body before the upstream call. Output policies run after the response is assembled (for streaming, on the completed transcript). Policies can block, warn, or redact.
+
+### Request log and audit
+Every request and response is stored for 30 days with the actor (which API key), full payload, latency, provider response, and any policy decisions. Admin actions (key creation, policy edits, route changes) are stored permanently in an immutable audit log with the operator's identity.
+
+### Token spike alerts
+Token usage is tracked per key and per route. AnveGuard fires an alert when usage deviates from the baseline by more than a calibratable severity score, surfacing anomalies before they hit the bill.
+
+## Architecture
+
+The proxy is a single Edge Function deployed at the network edge. It has no cold start, no buffering, and forwards streaming responses chunk-by-chunk so time-to-first-token is preserved. Median added latency is under 5 ms in the same region as the upstream provider. Backend state lives in a Postgres database; provider credentials are encrypted with AES-GCM before being written.
+
+## Common questions and answers
+
+### What's the latency overhead?
+Median proxy overhead is under 5 ms. The dominant cost in any AI request is the upstream provider, not AnveGuard. Streaming responses are relayed without buffering.
+
+### Where are credentials stored?
+Upstream provider keys are encrypted with AES-GCM using a workspace-derived key before being written to the database. They are never returned to the dashboard or visible to other workspace members. Applications only ever hold an AnveGuard key, which can be rotated or revoked instantly.
+
+### Are prompts and responses stored?
+Yes. Request and response payloads are stored in the request log for 30 days so operators can debug and audit. AnveGuard does not train any model on this data and does not share it with third parties beyond the upstream provider the operator chose.
+
+### Can AnveGuard be self-hosted?
+The proxy is a single Edge Function with a Postgres backend. A Docker-based self-host distribution is in progress; contact the team for early access.
+
+### Does AnveGuard rate-limit requests?
+No. AnveGuard does not add rate limits beyond what the upstream provider enforces. Spend caps are on the roadmap.
+
+### Do policies work with streaming?
+Input policies run before the stream starts. Output policies run on the assembled transcript after the stream ends, since AnveGuard cannot undo bytes already sent. For pre-flight content classification, run it before calling AnveGuard.
+
+### What providers are supported?
+Any OpenAI Chat Completions-compatible provider. Tested with OpenAI, Anthropic (via OpenAI-compat adapter), Google (via OpenAI-compat adapter), OpenRouter, Perplexity, Ollama, and self-hosted endpoints.
+
+### How is access controlled?
+Each API key is scoped to a workspace and can be attached to policies and routes. Keys can be rotated or revoked instantly from the console. All key changes are recorded in the audit log.
+
+### What does pricing look like?
+Free tier covers full evaluation including policies, audit logs, and the request explorer. No credit card required to start.
+
+## Page index
+
+| URL | Title | Purpose |
+|---|---|---|
+| https://guard.citerlabs.com/ | AnveGuard — The control layer for AI requests | Product landing |
+| https://guard.citerlabs.com/docs | AnveGuard Docs — OpenAI-compatible AI proxy | Documentation home |
+| https://guard.citerlabs.com/docs/quickstart | Quickstart | Five-minute setup |
+| https://guard.citerlabs.com/docs/concepts | Concepts | Core model: keys, endpoints, routes, policies, logs |
+| https://guard.citerlabs.com/docs/api-keys | API keys | Creating, scoping, rotating |
+| https://guard.citerlabs.com/docs/endpoints | Endpoints & providers | Upstream provider configuration |
+| https://guard.citerlabs.com/docs/routes | Routes & fallbacks | Model aliases and fallback chains |
+| https://guard.citerlabs.com/docs/policies | Policies | Authoring keyword, regex, structural policies |
+| https://guard.citerlabs.com/docs/logs | Logs & audit | Searching request log and audit trail |
+| https://guard.citerlabs.com/docs/proxy-api | Proxy API | /v1/chat/completions reference |
+| https://guard.citerlabs.com/docs/errors | Errors | Error codes and handling |
+| https://guard.citerlabs.com/docs/faq | FAQ | Common questions |
+| https://guard.citerlabs.com/sign-up | Sign up | Create a free account |
+| https://guard.citerlabs.com/sign-in | Sign in | Access the console |

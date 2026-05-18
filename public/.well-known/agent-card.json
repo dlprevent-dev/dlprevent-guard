@@ -1,0 +1,40 @@
+{
+  "name": "AnveGuard",
+  "description": "Drop-in proxy for the OpenAI Chat Completions API. Enforces policies, logs every request, governs multi-provider AI usage.",
+  "url": "https://guard.citerlabs.com",
+  "provider": {
+    "organization": "AnveGuard",
+    "url": "https://guard.citerlabs.com"
+  },
+  "version": "1.0.0",
+  "capabilities": {
+    "streaming": true,
+    "pushNotifications": false,
+    "stateTransitionHistory": true
+  },
+  "skills": [
+    {
+      "id": "chat_completions",
+      "name": "OpenAI-compatible chat completions",
+      "description": "Forwards OpenAI Chat Completions requests to a configured upstream provider, applying policies and logging the full transaction.",
+      "tags": ["llm", "openai-compatible", "proxy", "gateway"],
+      "inputModes": ["application/json"],
+      "outputModes": ["application/json", "text/event-stream"]
+    },
+    {
+      "id": "policy_enforcement",
+      "name": "Request/response policy enforcement",
+      "description": "Applies keyword, regex, and structural policies to AI requests and responses with block/warn/redact actions.",
+      "tags": ["policy", "guardrails", "governance"]
+    },
+    {
+      "id": "audit_log",
+      "name": "Request and admin audit log",
+      "description": "Stores every AI request, response, and admin action with actor, timestamp, and full payload.",
+      "tags": ["audit", "compliance", "observability"]
+    }
+  ],
+  "defaultInputModes": ["application/json"],
+  "defaultOutputModes": ["application/json", "text/event-stream"],
+  "documentationUrl": "https://guard.citerlabs.com/docs"
+}
