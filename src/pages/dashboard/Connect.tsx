@@ -630,6 +630,112 @@ const Connect = () => {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  // ---- Edit mode: swap primary provider --------------------------------
+  const aliasedEndpointIds = useMemo(
+    () => new Set((aliasesQuery.data?.aliases ?? []).map((a) => a.target_endpoint_id).filter(Boolean) as string[]),
+    [aliasesQuery.data],
+  );
+  const unattachedEndpoints = useMemo(
+    () => (endpointsQuery.data?.endpoints ?? []).filter((e) => !aliasedEndpointIds.has(e.id)),
+    [endpointsQuery.data, aliasedEndpointIds],
+  );
+
+  const openChangeProvider = () => {
+    setSwapTile(null);
+    setSwapKey("");
+    setSwapBaseUrl("");
+    setChangeProviderOpen(true);
+  };
+
+  const confirmSwap = async () => {
+    if (!swapTile || !created) return;
+    if (swapTile.needsKey && !swapKey.trim()) {
+      toast.error("API key required");
+      return;
+    }
+    if (swapTile.id === "custom" && !swapBaseUrl.trim()) {
+      toast.error("Base URL required");
+      return;
+    }
+    let customPayloadSwap: Record<string, unknown> | undefined;
+    if (swapTile.provider === "custom") {
+      if (swapTile.id === "custom") {
+        customPayloadSwap = {
+          base_url: swapBaseUrl.trim(),
+          kind: "openai_compatible",
+          auth_scheme: swapKey ? "bearer" : "none",
+          auth_header: "Authorization",
+          extra_headers: {},
+          model_suggestions: [],
+        };
+      } else if (swapTile.template) {
+        const tpl = providerData?.custom_schema.templates.find((t) => t.id === swapTile.template);
+        if (tpl) {
+          const v = tpl.values;
+          customPayloadSwap = {
+            base_url: v.base_url,
+            kind: v.kind,
+            auth_scheme: v.auth_scheme,
+            auth_header: v.auth_header || "Authorization",
+            extra_headers: {},
+            path_prefix: v.path_prefix,
+            chat_path: v.chat_path,
+            models_path: v.models_path,
+            response_format: v.response_format,
+            model_suggestions: (v.model_suggestions || "").split(",").map((s) => s.trim()).filter(Boolean),
+          };
+        }
+      }
+    }
+    try {
+      await call("update_key", {
+        body: {
+          id: created.id,
+          provider: swapTile.provider,
+          provider_key: swapTile.needsKey ? swapKey : undefined,
+          custom: customPayloadSwap,
+          model_default: swapTile.defaultModel || undefined,
+        },
+      });
+      toast.success(`Primary provider switched to ${swapTile.label}`);
+      setTile(swapTile);
+      if (swapTile.defaultModel) {
+        setModel(swapTile.defaultModel);
+        setEditModel(swapTile.defaultModel);
+      }
+      setChangeProviderOpen(false);
+      qc.invalidateQueries({ queryKey: ["keys"] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  // ---- Edit mode: attach an already-saved endpoint as an alias --------
+  const submitAttachExisting = async () => {
+    if (!created || !attachEndpointId) return;
+    const ep = endpointById[attachEndpointId];
+    if (!ep) return;
+    const aliasName = (attachAlias.trim() || ep.default_model || ep.name).toLowerCase();
+    try {
+      await call("save_alias", {
+        body: {
+          api_key_id: created.id,
+          alias: aliasName,
+          target_model: attachAlias.trim() || ep.default_model || ep.name,
+          target_endpoint_id: ep.id,
+        },
+      });
+      toast.success(`${ep.name} attached as "${aliasName}"`);
+      setAttachExistingOpen(false);
+      setAttachEndpointId("");
+      setAttachAlias("");
+      qc.invalidateQueries({ queryKey: ["aliases", created.id] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+
   const copy = (s: string, label: string) => {
     navigator.clipboard.writeText(s);
     toast.success(`${label} copied`);
