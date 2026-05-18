@@ -910,10 +910,12 @@ async function handleListModels(req: Request): Promise<Response> {
 
   // Normalize to OpenAI-spec shape regardless of upstream provider.
   const parsed = parseModelsResponse(raw);
+  const nowSec = Math.floor(Date.now() / 1000);
   const data = parsed.models.map((m) => ({
     id: m.id,
     object: "model",
-    owned_by: m.owned_by ?? null,
+    created: nowSec,
+    owned_by: m.owned_by ?? "anveguard",
     ...(m.display_name ? { display_name: m.display_name } : {}),
     ...(m.context_window != null ? { context_window: m.context_window } : {}),
   }));
