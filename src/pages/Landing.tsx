@@ -31,9 +31,12 @@ import { toast } from "sonner";
  *   9. Footer                – brand, status, links
  */
 
+const GITHUB_URL = "https://github.com/ANVE-AI/prompt-sentinel-flow";
+
 const NAV = [
   { href: "#product", label: "Product" },
   { href: "#observability", label: "Observability" },
+  { href: "#opensource", label: "Open source" },
   { href: "#how", label: "Quickstart" },
   { href: "#faq", label: "FAQ" },
   { href: "/docs", label: "Docs" },
@@ -180,9 +183,15 @@ const Landing = () => {
         </nav>
         <div className="flex items-center gap-1.5">
           <Button variant="ghost" size="sm" asChild className="text-muted-foreground hover:text-foreground">
+            <a href={GITHUB_URL} target="_blank" rel="noreferrer" title="AnveGuard on GitHub — Apache 2.0">
+              <Github className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">GitHub</span>
+            </a>
+          </Button>
+          <Button variant="ghost" size="sm" asChild className="text-muted-foreground hover:text-foreground">
             <Link to="/docs" title="Open the AnveGuard documentation">
               <HelpCircle className="h-3.5 w-3.5" />
-              Help
+              <span className="hidden sm:inline">Help</span>
             </Link>
           </Button>
           <Button variant="ghost" size="sm" asChild>
@@ -202,10 +211,17 @@ const Landing = () => {
         the snippet section directly below carries that role. */}
     <section className="border-b border-border">
       <div className="mx-auto max-w-3xl px-4 md:px-6 pt-20 pb-14 lg:pt-28 lg:pb-20 text-center">
-        <div className="inline-flex items-center gap-2 rounded-full border border-border surface-2 px-2.5 py-1 text-meta text-muted-foreground font-mono">
-          <span className="h-1.5 w-1.5 rounded-full bg-status-ok" />
-          <span>v1 · Drop-in for the OpenAI API</span>
-        </div>
+        <a
+          href={GITHUB_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-2 rounded-full border border-border surface-2 px-2.5 py-1 text-meta text-muted-foreground font-mono hover:text-foreground hover:border-primary/40 transition-colors"
+          title="View the source on GitHub"
+        >
+          <Github className="h-3 w-3" />
+          <span>Open source · Apache 2.0 · ANVE-AI/prompt-sentinel-flow</span>
+          <ArrowRight className="h-3 w-3" />
+        </a>
         <h1 className="mt-6 text-display lg:text-display-xl font-semibold tracking-tight leading-[1.04]">
           The control layer between<br className="hidden sm:block" /> your app and every AI model.
         </h1>
@@ -253,9 +269,15 @@ const Landing = () => {
               Replay quickstart
             </a>
           </Button>
+          <Button size="lg" variant="outline" asChild>
+            <a href={GITHUB_URL} target="_blank" rel="noreferrer">
+              <Github className="mr-2 h-4 w-4" />
+              Star on GitHub
+            </a>
+          </Button>
         </div>
         <p className="mt-4 text-meta text-muted-foreground">
-          Free tier · No credit card · 2-minute setup ·{" "}
+          Free tier · No credit card · 2-minute setup · Apache 2.0 ·{" "}
           <Link to="/docs" className="underline hover:text-foreground">
             Need help?
           </Link>
@@ -503,6 +525,104 @@ const Landing = () => {
       </div>
     </section>
 
+    {/* ------------------------------ Open source --------------------------- */}
+    <section id="opensource" className="border-b border-border">
+      <div className="mx-auto max-w-6xl px-4 md:px-6 py-16 lg:py-20">
+        <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-start">
+          <div>
+            <div className="text-meta uppercase tracking-[0.18em] text-primary font-mono">
+              Open source
+            </div>
+            <h2 className="mt-2 text-display font-semibold tracking-tight">
+              Built in the open. Apache 2.0.
+            </h2>
+            <p className="mt-4 text-body text-muted-foreground leading-relaxed">
+              AnveGuard is open source — the proxy, the dashboard, the policy
+              engine, and the 130+ attack-corpus tests all live on GitHub. Run
+              the hosted service, self-host the whole stack, or fork it and make
+              it yours. No telemetry, no lock-in.
+            </p>
+            <ul className="mt-6 space-y-3">
+              {[
+                { t: "Full source on GitHub", b: "TypeScript frontend, Deno edge functions, Postgres migrations — every line of it." },
+                { t: "Self-hostable", b: "Bring your own Supabase + Clerk. Deploy the SPA to any static host." },
+                { t: "PRs welcome", b: "63 detection rules and growing. Pick a good-first-issue and ship." },
+              ].map((x) => (
+                <li key={x.t} className="flex items-start gap-3">
+                  <Check className="mt-1 h-4 w-4 text-primary shrink-0" />
+                  <span className="text-body text-muted-foreground">
+                    <span className="text-foreground font-medium">{x.t}.</span>{" "}
+                    {x.b}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <div className="mt-8 flex flex-wrap items-center gap-2.5">
+              <Button size="lg" asChild>
+                <a href={GITHUB_URL} target="_blank" rel="noreferrer">
+                  <Github className="mr-2 h-4 w-4" /> View on GitHub
+                </a>
+              </Button>
+              <Button size="lg" variant="outline" asChild>
+                <a
+                  href={`${GITHUB_URL}/blob/main/CONTRIBUTING.md`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Contribute <ArrowRight className="ml-2 h-4 w-4" />
+                </a>
+              </Button>
+            </div>
+          </div>
+
+          {/* Repo card — static, no GitHub API call */}
+          <div className="rounded-md border border-border surface-1 overflow-hidden">
+            <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+              <div className="flex items-center gap-2 text-meta font-mono text-muted-foreground">
+                <Github className="h-3.5 w-3.5" />
+                ANVE-AI / prompt-sentinel-flow
+              </div>
+              <span className="text-meta font-mono text-muted-foreground">Apache 2.0</span>
+            </div>
+            <div className="px-4 py-5">
+              <p className="text-body text-foreground leading-relaxed">
+                The open-source LLM firewall. A drop-in OpenAI-compatible proxy
+                that inspects, governs, and audits every call to OpenAI,
+                Anthropic, Google, Perplexity, and any custom provider.
+              </p>
+              <dl className="mt-5 grid grid-cols-3 gap-px bg-border border border-border">
+                <div className="surface-2 p-3">
+                  <dt className="text-meta font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                    Detectors
+                  </dt>
+                  <dd className="mt-1 text-h2 font-medium tabular-nums">63</dd>
+                </div>
+                <div className="surface-2 p-3">
+                  <dt className="text-meta font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                    Tests
+                  </dt>
+                  <dd className="mt-1 text-h2 font-medium tabular-nums">130+</dd>
+                </div>
+                <div className="surface-2 p-3">
+                  <dt className="text-meta font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                    License
+                  </dt>
+                  <dd className="mt-1 text-h2 font-medium">Apache 2.0</dd>
+                </div>
+              </dl>
+              <div className="mt-5 flex flex-wrap gap-2 text-meta font-mono text-muted-foreground">
+                {["typescript", "deno", "supabase", "react", "vite", "tailwind"].map((t) => (
+                  <span key={t} className="rounded-full border border-border surface-2 px-2 py-0.5">
+                    {t}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     {/* --------------------------------- FAQ -------------------------------- */}
     <section id="faq" className="border-b border-border">
       <div className="mx-auto max-w-3xl px-4 md:px-6 py-16 lg:py-20">
@@ -530,17 +650,17 @@ const Landing = () => {
           Ship AI features with a control layer from day one.
         </h2>
         <p className="mt-3 text-body text-muted-foreground">
-          Free to start. Pay only when you scale beyond the free tier.
+          Free to start. Open source forever. Self-host any time.
         </p>
-        <div className="mt-7 flex items-center justify-center gap-2.5">
+        <div className="mt-7 flex flex-wrap items-center justify-center gap-2.5">
           <Button size="lg" asChild>
             <Link to="/sign-up">
               Create your first key <ArrowRight className="ml-2 h-4 w-4" />
             </Link>
           </Button>
           <Button size="lg" variant="outline" asChild>
-            <a href="https://github.com" target="_blank" rel="noreferrer">
-              <Github className="mr-2 h-4 w-4" /> GitHub
+            <a href={GITHUB_URL} target="_blank" rel="noreferrer">
+              <Github className="mr-2 h-4 w-4" /> Star on GitHub
             </a>
           </Button>
         </div>
@@ -549,14 +669,27 @@ const Landing = () => {
 
     {/* ------------------------------- Footer ------------------------------- */}
     <footer>
-      <div className="mx-auto max-w-6xl px-4 md:px-6 h-14 flex items-center justify-between text-meta text-muted-foreground">
+      <div className="mx-auto max-w-6xl px-4 md:px-6 py-4 flex flex-col sm:flex-row items-center sm:justify-between gap-2 text-meta text-muted-foreground">
         <div className="flex items-center gap-3">
           <Logo size={20} />
-          <span>© {new Date().getFullYear()} AnveGuard</span>
+          <span>© {new Date().getFullYear()} AnveGuard · Apache 2.0</span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="h-1.5 w-1.5 rounded-full bg-status-ok live-pulse" />
-          All systems operational
+        <div className="flex items-center gap-4">
+          <a
+            href={GITHUB_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 hover:text-foreground transition-colors"
+          >
+            <Github className="h-3.5 w-3.5" /> GitHub
+          </a>
+          <Link to="/docs" className="hover:text-foreground transition-colors">
+            Docs
+          </Link>
+          <span className="inline-flex items-center gap-2">
+            <span className="h-1.5 w-1.5 rounded-full bg-status-ok live-pulse" />
+            All systems operational
+          </span>
         </div>
       </div>
     </footer>
