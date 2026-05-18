@@ -1,6 +1,6 @@
 // AnveGuard proxy — OpenAI-compatible /v1/chat/completions endpoint.
 // Public function; authenticated via AnveGuard API keys (Authorization: Bearer ag_live_...).
-import { corsHeaders, json, service, sha256Hex, decryptString, callerIp, checkRateLimit } from "../_shared/anveguard.ts";
+import { corsHeaders, json, service, sha256Hex, decryptString, callerIp, checkRateLimit, verifyClerkJwt } from "../_shared/anveguard.ts";
 import { getProvider, resolveEndpoint } from "../_shared/providers.ts";
 import { openaiToAnthropicRequest, anthropicToOpenAIResponse,
   anthropicStreamToOpenAI } from "../_shared/anthropic.ts";
