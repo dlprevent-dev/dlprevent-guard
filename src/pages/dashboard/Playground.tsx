@@ -74,6 +74,7 @@ function lastUsedTitle(ts: string | null | undefined): string {
  */
 const Playground = () => {
   const { call } = useDashboardApi();
+  const { getToken } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
