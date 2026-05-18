@@ -221,6 +221,7 @@ const Landing = () => {
       </div>
     </header>
 
+    <main>
     {/* --------------------------------- Hero -------------------------------- */}
     {/* Plain background, centered text, real CTA. No decorative diagram —
         the snippet section directly below carries that role. */}
@@ -681,6 +682,7 @@ const Landing = () => {
         </div>
       </div>
     </section>
+    </main>
 
     {/* ------------------------------- Footer ------------------------------- */}
     <footer>
