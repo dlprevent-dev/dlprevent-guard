@@ -269,9 +269,15 @@ const Landing = () => {
               Replay quickstart
             </a>
           </Button>
+          <Button size="lg" variant="outline" asChild>
+            <a href={GITHUB_URL} target="_blank" rel="noreferrer">
+              <Github className="mr-2 h-4 w-4" />
+              Star on GitHub
+            </a>
+          </Button>
         </div>
         <p className="mt-4 text-meta text-muted-foreground">
-          Free tier · No credit card · 2-minute setup ·{" "}
+          Free tier · No credit card · 2-minute setup · Apache 2.0 ·{" "}
           <Link to="/docs" className="underline hover:text-foreground">
             Need help?
           </Link>
