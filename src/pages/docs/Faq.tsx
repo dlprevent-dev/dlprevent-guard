@@ -12,7 +12,19 @@ const FAQ_ITEMS: { q: string; a: string }[] = [
 ];
 
 const Faq = () => (
-  <DocPage
+  <>
+    <Helmet>
+      <script type="application/ld+json">{JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        mainEntity: FAQ_ITEMS.map((f) => ({
+          "@type": "Question",
+          name: f.q,
+          acceptedAnswer: { "@type": "Answer", text: f.a },
+        })),
+      })}</script>
+    </Helmet>
+    <DocPage
     eyebrow="Reference · FAQ"
     title="FAQ"
     lede="Short answers to the questions operators ask in their first week."
