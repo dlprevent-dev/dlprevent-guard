@@ -73,7 +73,8 @@ const Faq = () => (
       Email support@anveguard.app or open the in-app chat. Include the request id from the
       log row — it shortens our response time considerably.
     </P>
-  </DocPage>
+    </DocPage>
+  </>
 );
 
 export default Faq;
