@@ -1,15 +1,16 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ShieldAlert, ShieldCheck, Ban, Flag, Activity, AlertTriangle, Sparkles } from "lucide-react";
+import { ShieldAlert, ShieldCheck, Ban, Flag, Activity, AlertTriangle, Sparkles, HelpCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useDashboardApi } from "@/lib/api";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState } from "@/components/empty-state";
+import { GuidedTour, hasVisitedTour, type TourStep } from "@/components/guided-tour";
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip,
   BarChart, Bar, CartesianGrid,
@@ -43,6 +44,7 @@ const fmtDay = (iso: string) => {
 export default function Threats() {
   const { call } = useDashboardApi();
   const [range, setRange] = useState<Range>("24h");
+  const [tourOpen, setTourOpen] = useState(false);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["attack_overview", range],
@@ -50,21 +52,77 @@ export default function Threats() {
     refetchInterval: 60_000,
   });
 
+  // Auto-open the tour on the first ever visit to this page. Slight delay
+  // so the page lays out before the spotlight measures elements.
+  useEffect(() => {
+    if (!hasVisitedTour("threats-v1")) {
+      const t = setTimeout(() => setTourOpen(true), 400);
+      return () => clearTimeout(t);
+    }
+  }, []);
+
+  const tourSteps: TourStep[] = [
+    {
+      selector: '[data-tour="threats-hero"]',
+      title: "Single-glance status",
+      body: "One of three states: Waiting for traffic / All clear / N requests blocked. Color matches severity — orange = flags only, red = blocks present.",
+      placement: "bottom",
+    },
+    {
+      selector: '[data-tour="threats-kpis"]',
+      title: "Volume + block rate",
+      body: "Total requests, blocked count, flagged count, and block rate. A block rate above 5% turns this card red — usually means a single key is being attacked or a noisy rule needs tuning.",
+      placement: "bottom",
+    },
+    {
+      selector: '[data-tour="threats-range"]',
+      title: "Window selector",
+      body: "Switch between 24h / 7d / 30d. All KPIs, charts, and breakdowns below update together. Use 30d to spot slow-burn campaigns.",
+      placement: "bottom",
+    },
+    {
+      selector: '[data-tour="threats-help"]',
+      title: "Replay this tour anytime",
+      body: "Re-take this 4-step walkthrough whenever — useful after the dashboard ships new surfaces, or when you're showing AnveGuard to a teammate. For full request detail (and the Replay button to re-run any blocked prompt), open Logs.",
+      placement: "bottom",
+    },
+  ];
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Threats"
         description="Live view of what the policy engine is catching across your workspace."
         actions={
-          <Select value={range} onValueChange={(v) => setRange(v as Range)}>
-            <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="24h">Last 24h</SelectItem>
-              <SelectItem value="7d">Last 7 days</SelectItem>
-              <SelectItem value="30d">Last 30 days</SelectItem>
-            </SelectContent>
-          </Select>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setTourOpen(true)}
+              data-tour="threats-help"
+              title="Take a guided tour of this page"
+            >
+              <HelpCircle className="h-3.5 w-3.5" />
+              Tour
+            </Button>
+            <Select value={range} onValueChange={(v) => setRange(v as Range)}>
+              <SelectTrigger data-tour="threats-range" className="w-32"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="24h">Last 24h</SelectItem>
+                <SelectItem value="7d">Last 7 days</SelectItem>
+                <SelectItem value="30d">Last 30 days</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         }
+      />
+
+      <GuidedTour
+        id="threats-v1"
+        open={tourOpen}
+        onClose={() => setTourOpen(false)}
+        steps={tourSteps}
+        finishLabel="Got it"
       />
 
       {error && (
@@ -76,10 +134,14 @@ export default function Threats() {
       {/* Hero status banner — single most-important live signal. Color +
           headline reflect what's happening RIGHT NOW. Replaces the
           "wall of stats" feel with a focused operational read. */}
-      {!isLoading && data && <HeroStatus data={data} />}
+      {!isLoading && data && (
+        <div data-tour="threats-hero">
+          <HeroStatus data={data} />
+        </div>
+      )}
 
       {/* KPI strip */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div data-tour="threats-kpis" className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Kpi
           label="Total requests"
           value={data?.total_requests}

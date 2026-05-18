@@ -57,24 +57,19 @@ const STEPS: Step[] = [
       { icon: Route, name: "Route", line: "Optional rules that pick which endpoint to use based on model alias or context." },
     ],
   },
-  // Steps 3-5 — the existing actionable trio (preserved).
+  // Step 3 — Connect: a unified flow Lovable built that does endpoint +
+  // key + alias in one wizard. Replaces the old "go to Endpoints, then
+  // go to Keys" two-step that lived here. New users get a much smoother
+  // path; advanced users can still hit /dashboard/endpoints + /dashboard/keys
+  // directly from the sidebar.
   {
     kind: "action",
     icon: Plug,
-    title: "Add an upstream endpoint",
-    body: "Tell AnveGuard which provider to guard (OpenAI, Anthropic, Perplexity, or your own host). Your provider key is stored once here — clients never see it.",
-    ctaLabel: "Open Endpoints",
-    ctaPath: "/dashboard/endpoints",
-    doneWhen: ({ hasEndpoint }) => hasEndpoint,
-  },
-  {
-    kind: "action",
-    icon: KeyRound,
-    title: "Generate an AnveGuard key",
-    body: "Create an ag_live_… key bound to your endpoint. Apps use this key as a Bearer token — only the hash is stored, so copy the secret when it's shown.",
-    ctaLabel: "Open Keys",
-    ctaPath: "/dashboard/keys",
-    doneWhen: ({ hasKey }) => hasKey,
+    title: "Connect a provider",
+    body: "Pick a provider (OpenAI / Anthropic / Perplexity / OpenRouter / Gemini / Groq / Ollama / custom), paste your provider key, and get an AnveGuard ag_live_… key back. One short wizard — endpoint + key + alias in one pass.",
+    ctaLabel: "Open Connect",
+    ctaPath: "/dashboard/connect",
+    doneWhen: ({ hasEndpoint, hasKey }) => hasEndpoint && hasKey,
   },
   {
     kind: "action",
@@ -169,7 +164,7 @@ export function OnboardingWalkthrough() {
         <DialogHeader>
           <DialogTitle>Welcome to AnveGuard</DialogTitle>
           <DialogDescription>
-            Six short steps — concepts first, then your first guarded request.
+            Five short steps — concepts first, then your first guarded request.
           </DialogDescription>
         </DialogHeader>
 
