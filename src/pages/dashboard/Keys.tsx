@@ -340,6 +340,10 @@ const Keys = () => {
             Issue keys for each environment. Test, rotate, and revoke without touching provider credentials.
           </p>
         </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" asChild>
+            <a href="/dashboard/connect"><Sparkles className="h-4 w-4 mr-2" /> Connect a provider</a>
+          </Button>
         <Dialog open={open} onOpenChange={(v) => (v ? setOpen(true) : reset())}>
           <DialogTrigger asChild>
             <Button>
