@@ -295,10 +295,22 @@ export function TemplateWizardDialog({
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="What this template is for, who should apply it…"
-                  className="mt-1.5 min-h-[100px]"
+                  className="mt-1.5 min-h-[80px]"
                 />
               </div>
-              <label className="flex items-start gap-2 cursor-pointer rounded-md border border-border surface-2 p-3">
+              <div>
+                <Label htmlFor="tpl-highlights">Card highlights (one per line)</Label>
+                <Textarea
+                  id="tpl-highlights"
+                  value={highlightsText}
+                  onChange={(e) => setHighlightsText(e.target.value)}
+                  placeholder={"Injection guard: block\nBehavioral throttling: flag\nFuzzy matching enabled"}
+                  className="mt-1.5 min-h-[80px] font-mono text-meta"
+                />
+                <p className="text-meta text-muted-foreground mt-1">
+                  Shown as checkmarks on the template card. 3–5 short lines.
+                </p>
+              </div>
                 <Checkbox
                   checked={includeKeywords}
                   onCheckedChange={(v) => setIncludeKeywords(!!v)}
