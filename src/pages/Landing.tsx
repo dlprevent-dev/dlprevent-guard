@@ -159,15 +159,38 @@ const Landing = () => {
       title="AnveGuard — The control layer for AI requests"
       description="Drop-in OpenAI-compatible proxy. Enforce policies, log every request, and govern AI usage across providers from a single console."
       path="/"
-      jsonLd={{
-        "@context": "https://schema.org",
-        "@type": "FAQPage",
-        mainEntity: FAQ.map((f) => ({
-          "@type": "Question",
-          name: f.q,
-          acceptedAnswer: { "@type": "Answer", text: f.a },
-        })),
-      }}
+      jsonLd={[
+        {
+          "@context": "https://schema.org",
+          "@type": "SoftwareApplication",
+          name: "AnveGuard",
+          applicationCategory: "DeveloperApplication",
+          applicationSubCategory: "AI gateway / LLM proxy",
+          operatingSystem: "Web (Browser-based)",
+          url: "https://guard.citerlabs.com",
+          description: "Drop-in proxy for the OpenAI Chat Completions API. Enforce policies, capture every request, govern AI usage from a single console.",
+          offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+          featureList: [
+            "Drop-in OpenAI-compatible proxy",
+            "Per-key policies (keyword, regex, structural)",
+            "Multi-provider routing with fallbacks",
+            "30-day request log with full payload",
+            "Immutable admin audit log",
+            "Encrypted upstream credentials (AES-GCM)",
+            "Token spike alerts",
+            "Streaming response forwarding",
+          ],
+        },
+        {
+          "@context": "https://schema.org",
+          "@type": "FAQPage",
+          mainEntity: FAQ.map((f) => ({
+            "@type": "Question",
+            name: f.q,
+            acceptedAnswer: { "@type": "Answer", text: f.a },
+          })),
+        },
+      ]}
     />
     {/* ------------------------------- Top bar ------------------------------ */}
     <header className="sticky top-0 z-40 border-b border-border bg-background/90 backdrop-blur">
