@@ -26,6 +26,7 @@ import { EmptyState } from "@/components/empty-state";
 import { HelpPanel } from "@/components/help-panel";
 import { HelpHint } from "@/components/help-hint";
 import { readProxyResponse } from "@/lib/proxy-response";
+import { consumePendingReplay, lastUserMessage, type ReplayPayload } from "@/lib/replay";
 
 const PROXY_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/proxy`;
 
@@ -121,6 +122,9 @@ const Playground = () => {
     intentConfidence?: number;
   } | null>(null);
 
+  // Replay banner state — set when arriving from a Logs "Replay in Playground" click.
+  const [replay, setReplay] = useState<ReplayPayload | null>(null);
+
   // Deep-link: /dashboard/playground?key=<id> auto-selects after returning
   // from the New Key flow on the Endpoints/Keys page.
   useEffect(() => {
@@ -133,6 +137,30 @@ const Playground = () => {
       setSearchParams(next, { replace: true });
     }
   }, [activeKeys, searchParams, setSearchParams]);
+
+  // Replay handoff: consume the sessionStorage payload once on mount,
+  // prefill the prompt, auto-select the api_key (if still active), and
+  // surface a banner so the user knows they're in replay mode.
+  useEffect(() => {
+    const r = consumePendingReplay();
+    if (!r) return;
+    setReplay(r);
+    const text = lastUserMessage(r);
+    if (text) setPrompt(text);
+    if (r.apiKeyId && activeKeys.some((k) => k.id === r.apiKeyId)) {
+      setSelection({ kind: "key", id: r.apiKeyId });
+    }
+    if (r.stream !== undefined) setStream(r.stream);
+    if (r.model) setModel(r.model);
+    // Clean the `?replay=…` query param so a refresh doesn't look stuck
+    // in replay mode after the banner is dismissed.
+    const next = new URLSearchParams(searchParams);
+    next.delete("replay");
+    setSearchParams(next, { replace: true });
+  // Run once on mount; intentionally not re-firing on activeKeys changes
+  // (the consumed payload is gone, so re-trying after keys load would no-op).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const selectedKey =
     selection?.kind === "key" ? activeKeys.find((k) => k.id === selection.id) : null;
@@ -544,6 +572,42 @@ const Playground = () => {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+            )}
+            {replay && (
+              <div className="rounded-md border border-primary/30 bg-primary/5 p-3 flex items-start gap-3">
+                <Clock className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-medium">
+                    Replaying log{" "}
+                    <code className="font-mono text-[10px] bg-surface-2 px-1 py-0.5 rounded">
+                      {replay.logId.slice(0, 12)}
+                      {replay.logId.length > 12 ? "…" : ""}
+                    </code>
+                  </div>
+                  <div className="text-meta text-muted-foreground mt-0.5">
+                    {replay.originalVerdict && (
+                      <>Original verdict: <strong className={
+                        replay.originalVerdict === "block" ? "text-status-block" :
+                        replay.originalVerdict === "flag" ? "text-status-warn" : "text-status-ok"
+                      }>{replay.originalVerdict}</strong>. </>
+                    )}
+                    {replay.originalBlockReason && (
+                      <span className="italic">{replay.originalBlockReason}</span>
+                    )}
+                    {replay.messages.length > 1 && (
+                      <> · Prefilled the last user message; the full {replay.messages.length}-message conversation is not sent — edit or re-run to compare.</>
+                    )}
+                  </div>
+                </div>
+                <Button
+                  size="sm" variant="ghost"
+                  onClick={() => setReplay(null)}
+                  className="shrink-0 h-7"
+                  title="Dismiss replay banner"
+                >
+                  Dismiss
+                </Button>
               </div>
             )}
             <div>

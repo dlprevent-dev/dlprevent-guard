@@ -4,12 +4,16 @@ import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Search, ShieldAlert, Ban, ShieldCheck, Inbox, Layers, Sparkles, AlertTriangle, CheckCircle2, Flame } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDashboardApi } from "@/lib/api";
+import { ReplayButton } from "@/components/replay-button";
+import { GuidedTour, hasVisitedTour, type TourStep } from "@/components/guided-tour";
+import { HelpCircle } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SkeletonRows } from "@/components/skeletons";
 import { PageHeader } from "@/components/page-header";
@@ -301,7 +305,10 @@ const RequestLogs = () => {
                       </div>
                     )}
                     <div>
-                      <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Messages</div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Messages</div>
+                        <ReplayButton row={selected} size="sm" variant="outline" />
+                      </div>
                       <pre className="rounded-md border border-border bg-surface-2 p-3 text-xs whitespace-pre-wrap overflow-x-auto">
                         {JSON.stringify(selected.messages, null, 2)}
                       </pre>
@@ -680,7 +687,10 @@ const SecurityEvents = () => {
                   </div>
                 )}
                 <div>
-                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Input</div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Input</div>
+                    <ReplayButton row={selected} size="sm" variant="outline" />
+                  </div>
                   <pre className="rounded-md border border-border bg-surface-2 p-3 text-xs whitespace-pre-wrap overflow-x-auto">
                     {JSON.stringify(selected.messages, null, 2)}
                   </pre>
@@ -835,12 +845,63 @@ const Logs = () => {
   const initialTab = searchParams.get("tab") === "security"
     || searchParams.get("tab") === "audit" ? searchParams.get("tab")! : "requests";
   const [tab, setTab] = useState<string>(initialTab);
+  const [tourOpen, setTourOpen] = useState(false);
+
+  // Auto-open the tour on the first ever visit to this page.
+  useEffect(() => {
+    if (!hasVisitedTour("logs-v1")) {
+      // Tiny delay so layout settles + targets exist before measurement.
+      const t = setTimeout(() => setTourOpen(true), 400);
+      return () => clearTimeout(t);
+    }
+  }, []);
+
+  const tourSteps: TourStep[] = [
+    {
+      selector: '[data-tour="logs-tabs"]',
+      title: "Three views, one source",
+      body: "Every proxied request lives here. Requests is the firehose, Security events filters to just blocks/flags/throttles, Audit log is admin actions (key created, policy changed, etc).",
+      placement: "bottom",
+    },
+    {
+      selector: '[data-tour="logs-tab-security"]',
+      title: "Jump straight to threats",
+      body: "When something looks wrong, this tab surfaces only the requests the engine blocked, flagged, or throttled — sorted by severity.",
+      placement: "bottom",
+    },
+    {
+      selector: '[data-tour="logs-help"]',
+      title: "Re-take this tour anytime",
+      body: "Click here to replay this walkthrough — useful after the dashboard ships new surfaces, or when you're showing AnveGuard to a teammate.",
+      placement: "bottom",
+    },
+  ];
 
   return (
     <div className="px-4 md:px-6 py-5 space-y-5 max-w-[1320px] mx-auto">
-      <PageHeader
-        title="Logs"
-        description="Request traffic, security events, and account-level audit."
+      <div className="flex items-start justify-between gap-3">
+        <PageHeader
+          title="Logs"
+          description="Request traffic, security events, and account-level audit."
+        />
+        <Button
+          variant="outline" size="sm"
+          onClick={() => setTourOpen(true)}
+          data-tour="logs-help"
+          className="shrink-0 mt-1"
+          title="Take a guided tour of this page"
+        >
+          <HelpCircle className="h-3.5 w-3.5" />
+          Tour
+        </Button>
+      </div>
+
+      <GuidedTour
+        id="logs-v1"
+        open={tourOpen}
+        onClose={() => setTourOpen(false)}
+        steps={tourSteps}
+        finishLabel="Got it"
       />
 
       <Tabs value={tab} onValueChange={(v) => {
@@ -849,11 +910,11 @@ const Logs = () => {
         if (v === "requests") next.delete("tab"); else next.set("tab", v);
         setSearchParams(next, { replace: true });
       }} className="space-y-4">
-        <TabsList className="bg-surface-2 border border-border h-9 p-0.5">
+        <TabsList data-tour="logs-tabs" className="bg-surface-2 border border-border h-9 p-0.5">
           <TabsTrigger value="requests" className="h-8 px-3 text-body data-[state=active]:bg-surface-1 data-[state=active]:shadow-pop">
             Requests
           </TabsTrigger>
-          <TabsTrigger value="security" className="h-8 px-3 text-body data-[state=active]:bg-surface-1 data-[state=active]:shadow-pop">
+          <TabsTrigger value="security" data-tour="logs-tab-security" className="h-8 px-3 text-body data-[state=active]:bg-surface-1 data-[state=active]:shadow-pop">
             <ShieldAlert className="h-3.5 w-3.5 mr-1.5" /> Security events
           </TabsTrigger>
           <TabsTrigger value="audit" className="h-8 px-3 text-body data-[state=active]:bg-surface-1 data-[state=active]:shadow-pop">
