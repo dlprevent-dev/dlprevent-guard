@@ -362,8 +362,8 @@ const Playground = () => {
             body: "Use the dropdown below. Configured endpoints with no key bound show up too — you'll be prompted to create one in a single click.",
           },
           {
-            title: "Paste the key secret",
-            body: <>Paste the <code className="font-mono text-xs">ag_live_…</code> value in the AnveGuard API key field. You only see it once at creation, so keep it handy.</>,
+            title: "Pick a key — secret auto-handled",
+            body: <>Selecting a key in the dropdown sends through your signed-in dashboard session, so you don't need to paste the <code className="font-mono text-xs">ag_live_…</code> secret. Paste one only if you're testing a key from another browser.</>,
           },
           {
             title: "Send or run a quick test",
