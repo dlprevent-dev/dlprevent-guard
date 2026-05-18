@@ -953,6 +953,20 @@ const Endpoints = () => {
         </div>
       </div>
 
+      <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2.5 text-meta flex items-start gap-2">
+        <Plug className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
+        <div className="text-muted-foreground">
+          <span className="text-foreground font-medium">Most users don't need this page.</span>{" "}
+          Use{" "}
+          <a href="/dashboard/connect" className="underline hover:text-foreground">
+            Connect
+          </a>{" "}
+          to add OpenAI, Anthropic, OpenRouter, Perplexity, Gemini, Groq, Mistral, Ollama, or
+          any OpenAI-compatible endpoint in one click. Endpoints are the advanced escape hatch
+          for per-key headers, custom paths, and routes.
+        </div>
+      </div>
+
       <HelpPanel
         storageKey="endpoints"
         title="How endpoints work"

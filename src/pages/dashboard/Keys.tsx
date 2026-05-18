@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Copy, Plus, Trash2, Check, X, Plug, Beaker, Loader2, KeyRound, Tags, Code2, Play, ShieldAlert, ShieldCheck, AlertTriangle } from "lucide-react";
+import { Copy, Plus, Trash2, Check, X, Plug, Beaker, Loader2, KeyRound, Tags, Code2, Play, ShieldAlert, ShieldCheck, AlertTriangle, Sparkles } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useDashboardApi } from "@/lib/api";
 import { toast } from "sonner";
@@ -340,6 +340,10 @@ const Keys = () => {
             Issue keys for each environment. Test, rotate, and revoke without touching provider credentials.
           </p>
         </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" asChild>
+            <a href="/dashboard/connect"><Sparkles className="h-4 w-4 mr-2" /> Connect a provider</a>
+          </Button>
         <Dialog open={open} onOpenChange={(v) => (v ? setOpen(true) : reset())}>
           <DialogTrigger asChild>
             <Button>
@@ -613,6 +617,7 @@ const Keys = () => {
             )}
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <HelpPanel

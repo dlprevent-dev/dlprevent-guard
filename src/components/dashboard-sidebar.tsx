@@ -10,6 +10,7 @@ import {
   ScrollText,
   Terminal,
   Plug,
+  Sparkles,
   Server,
   GitBranch,
   FlaskConical,
@@ -52,10 +53,11 @@ const groups: { id: string; label: string; items: NavItem[] }[] = [
     label: "Workspace",
     items: [
       { to: "/dashboard", label: "Overview", icon: LayoutDashboard, end: true },
+      { to: "/dashboard/connect", label: "Connect", icon: Sparkles },
       { to: "/dashboard/keys", label: "API Keys", icon: KeyRound },
-      { to: "/dashboard/endpoints", label: "Endpoints", icon: Plug },
-      // Advanced: providers is mostly a read-only catalog; new users use
-      // Endpoints. Routes is multi-endpoint fallback chains — advanced topic.
+      // Advanced: raw endpoint CRUD. New users should use Connect instead —
+      // it covers OpenAI, Anthropic, OpenRouter, Perplexity, Ollama, etc.
+      { to: "/dashboard/endpoints", label: "Endpoints", icon: Plug, advanced: true },
       { to: "/dashboard/providers", label: "Providers", icon: Server, advanced: true },
       { to: "/dashboard/routes", label: "Routes", icon: GitBranch, advanced: true },
     ],
