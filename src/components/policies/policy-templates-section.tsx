@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Beaker, Bot, Building2, Check, History, Plus, ShieldCheck, Sparkles, Trash2, User } from "lucide-react";
+import { Beaker, Bot, Building2, Check, Copy, History, Pencil, Plus, RotateCcw, ShieldCheck, Sparkles, Trash2, User } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
