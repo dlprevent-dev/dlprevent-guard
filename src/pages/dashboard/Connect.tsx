@@ -1145,9 +1145,26 @@ const Connect = () => {
             {/* Add-provider tile grid (drawer-style: shows form inline below) */}
             {!extraDrawerTile ? (
               <div className="space-y-2">
-                <Label className="text-meta font-mono uppercase tracking-[0.12em] text-muted-foreground">
-                  Add another provider
-                </Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label className="text-meta font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                    Add another provider
+                  </Label>
+                  {unattachedEndpoints.length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setAttachEndpointId(unattachedEndpoints[0].id);
+                        setAttachAlias(unattachedEndpoints[0].default_model ?? "");
+                        setAttachExistingOpen(true);
+                      }}
+                      title="Reuse an endpoint you've already configured"
+                    >
+                      <Plus className="mr-1 h-3.5 w-3.5" />
+                      Attach existing endpoint
+                    </Button>
+                  )}
+                </div>
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
                   {TILES.map((t) => (
                     <button
