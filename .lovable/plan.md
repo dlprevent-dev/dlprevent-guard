@@ -1,46 +1,42 @@
 ## Goal
 
-Make it visually obvious that the Connect wizard supports both shapes — without adding a separate flow.
+Let users edit an existing connector (AnveGuard key) from the Keys page so they can: add more LLMs, attach an already-configured endpoint, rename it, change the default model, or swap the primary provider — without revoking and recreating.
 
-```
-1:1   one provider  →  one AnveGuard key   (simple drop-in)
-N:1   many providers →  one AnveGuard key  (unified gateway)
-```
+## What exists today
 
-Both already work today (Step 2 is skippable). This is a UX/copy pass only.
+- `Connect.tsx` already supports `?key=<id>` and hydrates name + default model into Step 2 ("attach more LLMs"). Backend `save_endpoint` / `save_alias` / `list_aliases` already work.
+- Missing: no Edit button on Keys, no UI to rename / change default model / change primary provider, and no shortcut to attach an existing endpoint (today Step 2 always creates a new endpoint).
 
 ## Changes
 
-### 1. Step 1 → after "Create workspace"
-Branch into two equally-weighted CTAs instead of forcing the user through Step 2:
+### 1. `src/pages/dashboard/Keys.tsx` — Edit entry point
+Add a pencil button on each active key row (next to Code / Tags / Beaker) that navigates to `/dashboard/connect?key=<id>`. Tooltip: "Edit connector — add LLMs, change provider, rename".
 
-```
-[ Finish — use just <Provider> ]   [ Add more LLMs → ]
-       (1:1, jumps to credentials)        (N:1, opens step 2)
-```
+### 2. `src/pages/dashboard/Connect.tsx` — Edit mode upgrade
+Rebrand Step 2 header in edit mode to "Edit connector — {name}" and split it into three tabs/sections:
 
-Today only the second exists. The 1:1 path is buried behind clicking "Continue to credentials" on a step that says "Add more LLMs", which reads like a required step.
+**a. Workspace settings**
+- Editable `name` and `model_default` inputs.
+- "Save" calls a new `update_key` API (name + model_default) — falls back to existing edge mutation pattern if one is present; otherwise add a small `update_key` handler call.
 
-### 2. Step 2 header copy
-Currently: "Connect more LLMs to this workspace" — implies required.
-Change to: "Want a unified gateway? Attach more LLMs (optional)." + a "Skip — I only need one provider" ghost button at the top.
+**b. Primary provider**
+- Show current provider as a card with a "Change provider" button.
+- Clicking opens the Step 0 tile grid in a dialog; selecting a tile + entering a new key calls `update_key` with `{ provider, provider_key, endpoint_id? }` to repoint the workspace's upstream. Confirms with a "This will route all unaliased model calls to the new provider" warning.
 
-### 3. Step 0 tile grid intro
-Add a single line above the grid:
-> Pick a primary provider. You can attach more LLMs to the same AnveGuard key in the next step, or keep it 1:1.
+**c. Attached LLMs** (existing Step 2 list, enhanced)
+- Keep the "Add another LLM" drawer.
+- Add a second CTA "Attach existing endpoint" that lists `endpointsQuery.data.endpoints` not yet aliased and lets the user pick one + give it an alias — calls `save_alias` only (no new endpoint, no new key paste).
+- Each alias row gets an inline "Edit alias" affordance (rename alias / change target model/endpoint) + existing remove button.
 
-### 4. Landing page Step 2 copy
-Current Step 02 body talks about routing many models. Soften to acknowledge both modes:
-> One ag_live_… key fronts your workspace — whether that's a single provider or a dozen. Apps pass `model="..."` and AnveGuard routes accordingly.
+### 3. Hydration fix
+`useEffect` for `editKeyId` already sets `created = { fullKey: "", id }`. Extend it to also fetch the key's current `provider` and `endpoint_id` so the "Primary provider" card can render the right tile label.
 
-### 5. Keys page hint
-Each key card already shows `endpoint_name` for 1:1 keys. Add an alias count badge ("+2 models") when aliases exist, so the difference between 1:1 and N:1 keys is visible at a glance.
-
-## Out of scope
-- No backend changes. No new tables. No new wizard step.
-- Existing single-provider keys keep working unchanged.
+### 4. Out of scope
+- No new tables, no schema changes.
+- Plaintext `ag_live_…` is never re-shown in edit mode (rotation stays a separate action on Keys page).
+- No changes to landing page or pricing.
 
 ## Files touched
-- `src/pages/dashboard/Connect.tsx` — branch CTA at end of Step 1, header/skip on Step 2, intro line on Step 0
-- `src/pages/Landing.tsx` — soften Step 02 copy
-- `src/pages/dashboard/Keys.tsx` — alias-count badge on key cards (small addition)
+- `src/pages/dashboard/Keys.tsx` (add Edit button)
+- `src/pages/dashboard/Connect.tsx` (edit-mode UI: rename, change provider dialog, attach-existing-endpoint flow)
+- Possibly one new backend handler `update_key` if not already present — will verify before adding; otherwise reuse existing.
