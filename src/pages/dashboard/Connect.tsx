@@ -284,6 +284,7 @@ interface KeyRow {
   endpoint_id: string | null;
   model_default: string;
   key_prefix: string;
+  custom_base_url?: string | null;
 }
 
 type Step = 0 | 1 | 2 | 3;
