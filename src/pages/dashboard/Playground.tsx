@@ -221,10 +221,32 @@ const Playground = () => {
       toast.error("Pick an AnveGuard key above to send a request.");
       return;
     }
-    if (!apiKey.startsWith("ag_live_")) {
-      toast.error("Paste an AnveGuard key (starts with ag_live_) — you can only see it once when you create it.");
+    const selectedKeyRow = activeKeys.find((k) => k.id === selection.id);
+    if (!selectedKeyRow) {
+      toast.error("That key is no longer available.");
       return;
     }
+
+    // Build auth headers. Default = dashboard-session path (no paste needed);
+    // fall back to the manually pasted `ag_live_…` when the user explicitly
+    // opens the paste field.
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (showPasteKey) {
+      if (!apiKey.startsWith("ag_live_")) {
+        toast.error("Paste an AnveGuard key (starts with ag_live_) — you can only see it once when you create it.");
+        return;
+      }
+      headers.Authorization = `Bearer ${apiKey}`;
+    } else {
+      const token = await getToken();
+      if (!token) {
+        toast.error("Your dashboard session expired — sign in again to send requests.");
+        return;
+      }
+      headers.Authorization = `Bearer ${token}`;
+      headers["x-anveguard-key-id"] = selectedKeyRow.id;
+    }
+
     const effectivePrompt = opts?.promptOverride ?? prompt;
     const effectiveStream = opts?.streamOverride ?? stream;
     setLoading(true);
@@ -232,7 +254,7 @@ const Playground = () => {
     try {
       const res = await fetch(PROXY_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        headers,
         body: JSON.stringify({
           messages: [{ role: "user", content: effectivePrompt }],
           stream: effectiveStream,
