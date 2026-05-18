@@ -830,14 +830,24 @@ const Connect = () => {
               <div className="flex-1" />
               <Button variant="outline" onClick={runTest} disabled={!canTest || testing}>
                 {testing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Test connection
+                Test
               </Button>
               <Button
-                onClick={() => createKey.mutate()}
+                variant="outline"
+                onClick={() => createKey.mutate({ nextStep: 3 })}
                 disabled={!canTest || createKey.isPending}
+                title="Create a 1:1 key bound only to this provider"
               >
                 {createKey.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Create workspace <ArrowRight className="ml-1 h-4 w-4" />
+                Finish — use just {tile.label}
+              </Button>
+              <Button
+                onClick={() => createKey.mutate({ nextStep: 2 })}
+                disabled={!canTest || createKey.isPending}
+                title="Create the key, then attach more LLMs as a unified gateway"
+              >
+                {createKey.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Add more LLMs <ArrowRight className="ml-1 h-4 w-4" />
               </Button>
             </div>
           </CardContent>
