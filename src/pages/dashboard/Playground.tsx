@@ -566,18 +566,44 @@ const Playground = () => {
                 )}
               </div>
             )}
-            <div>
-              <Label htmlFor="ak" className="text-meta uppercase tracking-wider text-muted-foreground inline-flex items-center gap-1.5">
-                AnveGuard API key
-                <HelpHint>Paste the <code className="font-mono">ag_live_…</code> secret. It's only shown once at creation — AnveGuard stores a hash, not the secret.</HelpHint>
-              </Label>
-              <Input
-                id="ak" value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="ag_live_…"
-                className="mt-1.5 font-mono text-xs surface-2 border-border"
-              />
-            </div>
+            {selectedKey && !showPasteKey && (
+              <div className="rounded-md border border-border bg-surface-2/40 p-3 flex items-start gap-2">
+                <ShieldCheck className="h-4 w-4 text-status-ok mt-0.5 shrink-0" />
+                <div className="flex-1 min-w-0 text-meta text-muted-foreground">
+                  Sending as <span className="font-medium text-foreground">your dashboard session</span> — no need to paste the secret. The proxy resolves <span className="font-mono">{selectedKey.name}</span> server-side.{" "}
+                  <button
+                    type="button"
+                    className="underline underline-offset-2 hover:text-foreground"
+                    onClick={() => setShowPasteKey(true)}
+                  >
+                    Use a pasted key instead
+                  </button>
+                </div>
+              </div>
+            )}
+            {(!selectedKey || showPasteKey) && (
+              <div>
+                <Label htmlFor="ak" className="text-meta uppercase tracking-wider text-muted-foreground inline-flex items-center gap-1.5">
+                  AnveGuard API key
+                  <HelpHint>Paste the <code className="font-mono">ag_live_…</code> secret. It's only shown once at creation — AnveGuard stores a hash, not the secret. Leave blank to send as the signed-in dashboard user.</HelpHint>
+                </Label>
+                <Input
+                  id="ak" value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={selectedKey ? "ag_live_… (optional — leave blank for dashboard auth)" : "ag_live_…"}
+                  className="mt-1.5 font-mono text-xs surface-2 border-border"
+                />
+                {selectedKey && showPasteKey && (
+                  <button
+                    type="button"
+                    className="mt-1.5 text-meta text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                    onClick={() => { setShowPasteKey(false); setApiKey(""); }}
+                  >
+                    Hide — use dashboard session instead
+                  </button>
+                )}
+              </div>
+            )}
             {selectedKey && (
               <div>
                 <Label htmlFor="model" className="text-meta uppercase tracking-wider text-muted-foreground inline-flex items-center gap-1.5">
