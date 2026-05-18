@@ -1,7 +1,7 @@
 // AnveGuard proxy — OpenAI-compatible /v1/chat/completions endpoint.
 // Public function; authenticated via AnveGuard API keys (Authorization: Bearer ag_live_...).
 import { corsHeaders, json, service, sha256Hex, decryptString, callerIp, checkRateLimit, verifyClerkJwt } from "../_shared/anveguard.ts";
-import { getProvider, resolveEndpoint } from "../_shared/providers.ts";
+import { getProvider, resolveEndpoint, PROVIDERS } from "../_shared/providers.ts";
 import { openaiToAnthropicRequest, anthropicToOpenAIResponse,
   anthropicStreamToOpenAI } from "../_shared/anthropic.ts";
 import { chatToResponsesRequest, responsesToChatResponse,
@@ -872,6 +872,19 @@ async function handleListModels(req: Request): Promise<Response> {
     return errorResponse("openai", 401, auth.error?.message ?? "Unauthorized", { code: auth.error?.code ?? "invalid_api_key" });
   }
   const keyRow = auth.keyRow;
+
+  // For providers without a live /v1/models endpoint (e.g. Lovable Gateway),
+  // serve a static catalog built from the provider definition so third-party
+  // SDKs that call `client.models.list()` still get a valid OpenAI envelope.
+  const nowSecStatic = Math.floor(Date.now() / 1000);
+  const providerDef = PROVIDERS.find((p) => p.id === keyRow.provider);
+  if (providerDef && !providerDef.models_url && Array.isArray(providerDef.model_suggestions) && providerDef.model_suggestions.length > 0) {
+    const staticData = providerDef.model_suggestions.map((id) => ({
+      id, object: "model", created: nowSecStatic, owned_by: providerDef.id,
+    }));
+    await sb.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyRow.id);
+    return json({ object: "list", data: staticData }, 200);
+  }
 
   // Resolve upstream credentials the same way /v1/chat/completions does.
   let upstreamKey: string | null = null;
