@@ -219,7 +219,16 @@ export function TemplateWizardDialog({
     return merged;
   }, [settingsQ.data, intentScope]);
 
-  const isLoading = policiesQ.isLoading || settingsQ.isLoading || rulesQ.isLoading;
+  const isLoading = settingsQ.isLoading || (!seeded && (policiesQ.isLoading || rulesQ.isLoading));
+  const titlePrefix =
+    mode === "edit_builtin" ? "Edit built-in template"
+    : mode === "edit_custom" ? "Edit template"
+    : mode === "duplicate" ? "Duplicate template"
+    : "New policy template";
+  const saveLabel =
+    mode === "edit_builtin" ? "Save override"
+    : mode === "edit_custom" ? "Save changes"
+    : "Save template";
   const canNext =
     (step === 1 && name.trim().length > 0) ||
     (step === 2) ||
