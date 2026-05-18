@@ -592,6 +592,27 @@ export function PolicyTemplatesSection() {
         templateName={historyTpl?.name ?? ""}
       />
 
+      <AlertDialog open={!!resetTarget} onOpenChange={(o) => !o && setResetTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset "{resetTarget?.name}" to default?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your customizations to this built-in template will be discarded. The original
+              built-in version will be restored. Your live policy is not affected.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={remove.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={remove.isPending}
+              onClick={(e) => { e.preventDefault(); if (resetTarget) remove.mutate(resetTarget.id); }}
+            >
+              {remove.isPending ? "Resetting…" : "Reset to default"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <AlertDialog open={!!deleteId} onOpenChange={(o) => !o && setDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
