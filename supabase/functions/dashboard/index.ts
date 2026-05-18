@@ -951,6 +951,139 @@ Deno.serve(async (req) => {
         return json({ ok: true });
       }
 
+      // Update an existing api_keys row — supports rename, default-model
+      // change, and swapping the primary upstream provider (with a new
+      // provider_key or an attached saved endpoint). Plaintext is never
+      // re-issued here; the ag_live_* secret is unchanged. Use
+      // rotate_api_key for that.
+      case "update_key": {
+        const { id, name: newName, model_default, provider: newProvider, provider_key, custom, endpoint_id } = body ?? {};
+        if (!id) return json({ error: "id required" }, 400);
+        const { data: row } = await sb.from("api_keys").select("*")
+          .eq("id", id).eq("user_id", userId).maybeSingle();
+        if (!row) return json({ error: "Key not found" }, 404);
+        if (row.is_active === false) return json({ error: "Cannot edit a revoked key." }, 400);
+
+        const patch: Record<string, unknown> = {};
+        if (typeof newName === "string" && newName.trim()) patch.name = newName.trim().slice(0, 120);
+        if (typeof model_default === "string" && model_default.trim()) patch.model_default = model_default.trim();
+
+        const changingProvider = typeof newProvider === "string" && newProvider !== row.provider;
+        const changingKey = typeof provider_key === "string" && provider_key.length > 0;
+        const changingEndpoint = typeof endpoint_id === "string" && endpoint_id;
+        const changingCustom = custom && typeof custom === "object";
+
+        if (changingProvider || changingKey || changingEndpoint || changingCustom) {
+          const targetProvider = changingProvider ? newProvider : row.provider;
+          const def = getProvider(targetProvider);
+          if (!def) return json({ error: "Invalid provider" }, 400);
+          patch.provider = targetProvider;
+
+          if (targetProvider === "custom") {
+            if (changingEndpoint) {
+              const { data: ep } = await sb.from("endpoints").select("*")
+                .eq("id", endpoint_id).eq("user_id", userId).maybeSingle();
+              if (!ep) return json({ error: "Endpoint not found" }, 404);
+              patch.endpoint_id = ep.id;
+              patch.custom_base_url = ep.base_url;
+              patch.custom_models_url = ep.models_url;
+              patch.custom_kind = ep.kind;
+              patch.custom_auth_scheme = ep.auth_scheme;
+              patch.custom_auth_header = ep.auth_header;
+              patch.custom_extra_headers = ep.extra_headers ?? {};
+              patch.custom_model_suggestions = ep.model_suggestions ?? [];
+              patch.custom_path_prefix = ep.path_prefix ?? null;
+              patch.custom_chat_path = ep.chat_path ?? null;
+              patch.custom_models_path = ep.models_path ?? null;
+              patch.custom_response_format = ep.response_format ?? null;
+              patch.provider_key_encrypted = ep.provider_key_encrypted ?? null;
+              if (!patch.model_default && ep.default_model) patch.model_default = ep.default_model;
+            } else if (changingCustom) {
+              let resolved;
+              try {
+                resolved = resolveCustomEndpoint({
+                  base_url: custom.base_url,
+                  models_url: custom.models_url || null,
+                  kind: custom.kind,
+                  auth_scheme: custom.auth_scheme,
+                  auth_header: custom.auth_header || null,
+                  extra_headers: custom.extra_headers || null,
+                  path_prefix: custom.path_prefix || null,
+                  chat_path: custom.chat_path || null,
+                  models_path: custom.models_path || null,
+                  response_format: custom.response_format || null,
+                });
+              } catch (e) {
+                return json({ error: e instanceof Error ? e.message : String(e) }, 400);
+              }
+              if (resolved.auth_scheme !== "none" && !provider_key && !row.provider_key_encrypted) {
+                return json({ error: "Provider API key required for selected auth scheme" }, 400);
+              }
+              patch.endpoint_id = null;
+              patch.custom_base_url = custom.base_url;
+              patch.custom_models_url = custom.models_url || null;
+              patch.custom_kind = resolved.kind;
+              patch.custom_auth_scheme = resolved.auth_scheme;
+              patch.custom_auth_header = resolved.auth_header;
+              patch.custom_extra_headers = sanitizeExtraHeaders(custom.extra_headers || null);
+              patch.custom_path_prefix = custom.path_prefix || null;
+              patch.custom_chat_path = custom.chat_path || null;
+              patch.custom_models_path = custom.models_path || null;
+              patch.custom_response_format = resolved.response_format;
+              if (Array.isArray(custom.model_suggestions)) {
+                patch.custom_model_suggestions = custom.model_suggestions
+                  .filter((x: unknown) => typeof x === "string" && x.trim())
+                  .map((x: string) => x.trim());
+              }
+              if (provider_key) patch.provider_key_encrypted = await encryptString(provider_key);
+            } else if (changingKey) {
+              patch.provider_key_encrypted = await encryptString(provider_key);
+            }
+          } else {
+            // First-class provider swap — wipe custom_* and require a key
+            // unless the provider is managed.
+            if (changingProvider) {
+              patch.endpoint_id = null;
+              patch.custom_base_url = null;
+              patch.custom_models_url = null;
+              patch.custom_kind = null;
+              patch.custom_auth_scheme = null;
+              patch.custom_auth_header = null;
+              patch.custom_extra_headers = null;
+              patch.custom_model_suggestions = null;
+              patch.custom_path_prefix = null;
+              patch.custom_chat_path = null;
+              patch.custom_models_path = null;
+              patch.custom_response_format = null;
+            }
+            if (def.managed) {
+              if (changingProvider) patch.provider_key_encrypted = null;
+            } else if (changingKey) {
+              patch.provider_key_encrypted = await encryptString(provider_key);
+            } else if (changingProvider && !row.provider_key_encrypted) {
+              return json({ error: `${def.label} key required` }, 400);
+            }
+          }
+        }
+
+        if (Object.keys(patch).length === 0) {
+          return json({ ok: true, id, unchanged: true });
+        }
+
+        const { error: updErr } = await sb.from("api_keys")
+          .update(patch).eq("id", id).eq("user_id", userId);
+        if (updErr) return json({ error: updErr.message }, 400);
+
+        await auditAction(sb, userId, "api_key.updated", "api_key", id, {
+          key_name: patch.name ?? row.name,
+          key_prefix: row.key_prefix,
+          changed: Object.keys(patch),
+          previous_provider: row.provider,
+          new_provider: patch.provider ?? row.provider,
+        });
+        return json({ ok: true, id });
+      }
+
 
       case "save_endpoint": {
         // Create or update. Pass `id` to update.
