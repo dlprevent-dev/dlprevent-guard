@@ -196,7 +196,7 @@ let chatModel = "";
     method: "POST",
     headers: { "x-api-key": KEY, "Content-Type": "application/json", "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
-      model: chatModel || "claude-3-5-sonnet-latest",
+      model: "google/gemini-3-flash-preview",
       max_tokens: 32,
       messages: [{ role: "user", content: "Reply with the single word: pong" }],
     }),
