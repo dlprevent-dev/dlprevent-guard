@@ -617,6 +617,7 @@ const Keys = () => {
             )}
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <HelpPanel
