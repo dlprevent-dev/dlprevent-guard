@@ -576,14 +576,53 @@ const Playground = () => {
             <div>
               <Label htmlFor="ak" className="text-meta uppercase tracking-wider text-muted-foreground inline-flex items-center gap-1.5">
                 AnveGuard API key
-                <HelpHint>Paste the <code className="font-mono">ag_live_…</code> secret. It's only shown once at creation — AnveGuard stores a hash, not the secret.</HelpHint>
+                <HelpHint>
+                  When you pick a key from the dropdown the Playground signs requests with your dashboard session — you only need to paste the <code className="font-mono">ag_live_…</code> secret if you're testing as an external app. The secret is only shown once at creation; AnveGuard stores a hash, not the secret.
+                </HelpHint>
               </Label>
-              <Input
-                id="ak" value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="ag_live_…"
-                className="mt-1.5 font-mono text-xs surface-2 border-border"
-              />
+              {selectedKey && !showPasteKey ? (
+                <div className="mt-1.5 flex items-center justify-between gap-3 rounded-md border border-border surface-2 px-3 py-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Lock className="h-3.5 w-3.5 text-status-ok shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-meta">
+                        Sending as your dashboard session —{" "}
+                        <span className="font-medium text-foreground">{selectedKey.name}</span>
+                      </div>
+                      <div className="text-[10px] text-muted-foreground font-mono truncate">
+                        {selectedKey.key_prefix}… · no secret needed
+                      </div>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="text-meta shrink-0 h-7"
+                    onClick={() => setShowPasteKey(true)}
+                  >
+                    Use a pasted key instead
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <Input
+                    id="ak" value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="ag_live_…"
+                    className="mt-1.5 font-mono text-xs surface-2 border-border"
+                  />
+                  {selectedKey && showPasteKey && (
+                    <button
+                      type="button"
+                      onClick={() => { setShowPasteKey(false); setApiKey(""); }}
+                      className="text-meta text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+                    >
+                      ← Use dashboard session instead (no paste needed)
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
             {selectedKey && (
               <div>
