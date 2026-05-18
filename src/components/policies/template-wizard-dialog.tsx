@@ -311,6 +311,7 @@ export function TemplateWizardDialog({
                   Shown as checkmarks on the template card. 3–5 short lines.
                 </p>
               </div>
+              <label className="flex items-start gap-2 cursor-pointer rounded-md border border-border surface-2 p-3">
                 <Checkbox
                   checked={includeKeywords}
                   onCheckedChange={(v) => setIncludeKeywords(!!v)}
