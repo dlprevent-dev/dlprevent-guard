@@ -1,0 +1,23 @@
+# AnveGuard
+
+> The control layer for AI requests. A drop-in proxy for the OpenAI Chat Completions API that enforces policies, captures every request, and governs AI usage from a single console.
+
+AnveGuard sits between your application and any OpenAI-compatible LLM provider. Point your SDK at the AnveGuard endpoint with an AnveGuard API key and gain real-time policy enforcement, full request/response logging, threat detection, and per-route provider governance — without changing your application code.
+
+## Pages
+
+- [Home](/): Product overview, positioning, and key capabilities.
+
+## Docs
+
+- [Overview](/docs): What AnveGuard is and how it fits into your stack.
+- [Quickstart](/docs/quickstart): Get a request flowing through the proxy in minutes.
+- [Concepts](/docs/concepts): Core model — keys, endpoints, routes, policies, logs.
+- [API Keys](/docs/api-keys): Creating, scoping, and rotating AnveGuard keys.
+- [Endpoints](/docs/endpoints): The OpenAI-compatible proxy endpoint surface.
+- [Routes](/docs/routes): Mapping incoming requests to upstream providers.
+- [Policies](/docs/policies): Authoring and testing guardrails for AI traffic.
+- [Logs](/docs/logs): Inspecting every request, response, and policy decision.
+- [Proxy API](/docs/proxy-api): Full reference for the `/v1/chat/completions` endpoint.
+- [Errors](/docs/errors): Error codes returned by the proxy and how to handle them.
+- [FAQ](/docs/faq): Common questions about AnveGuard.
