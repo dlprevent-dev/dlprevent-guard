@@ -212,14 +212,33 @@ const Playground = () => {
       );
       return;
     }
-    if (selection?.kind !== "key") {
+    if (selection?.kind !== "key" || !selectedKey) {
       toast.error("Pick an AnveGuard key above to send a request.");
       return;
     }
-    if (!apiKey.startsWith("ag_live_")) {
-      toast.error("Paste an AnveGuard key (starts with ag_live_) — you can only see it once when you create it.");
-      return;
+
+    // Two auth paths:
+    //  - If the user pasted an ag_live_ secret, use it as a real SDK would.
+    //  - Otherwise, authenticate as the signed-in dashboard user and let the
+    //    proxy resolve the selected key by id (server-side). This avoids
+    //    forcing users to re-paste a secret they can't read back.
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (apiKey.trim().length > 0) {
+      if (!apiKey.startsWith("ag_live_")) {
+        toast.error("Paste an AnveGuard key (starts with ag_live_) or clear the field to use your dashboard session.");
+        return;
+      }
+      headers.Authorization = `Bearer ${apiKey}`;
+    } else {
+      const token = await getToken();
+      if (!token) {
+        toast.error("Sign in again to send through your dashboard session.");
+        return;
+      }
+      headers.Authorization = `Bearer ${token}`;
+      headers["x-anveguard-key-id"] = selectedKey.id;
     }
+
     const effectivePrompt = opts?.promptOverride ?? prompt;
     const effectiveStream = opts?.streamOverride ?? stream;
     setLoading(true);
@@ -227,7 +246,7 @@ const Playground = () => {
     try {
       const res = await fetch(PROXY_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        headers,
         body: JSON.stringify({
           messages: [{ role: "user", content: effectivePrompt }],
           stream: effectiveStream,
