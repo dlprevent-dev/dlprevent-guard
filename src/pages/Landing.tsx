@@ -159,6 +159,15 @@ const Landing = () => {
       title="AnveGuard — The control layer for AI requests"
       description="Drop-in OpenAI-compatible proxy. Enforce policies, log every request, and govern AI usage across providers from a single console."
       path="/"
+      jsonLd={{
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        mainEntity: FAQ.map((f) => ({
+          "@type": "Question",
+          name: f.q,
+          acceptedAnswer: { "@type": "Answer", text: f.a },
+        })),
+      }}
     />
     {/* ------------------------------- Top bar ------------------------------ */}
     <header className="sticky top-0 z-40 border-b border-border bg-background/90 backdrop-blur">
