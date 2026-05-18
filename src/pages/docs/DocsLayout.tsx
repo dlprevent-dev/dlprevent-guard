@@ -2,7 +2,56 @@ import { ReactNode, useEffect, useMemo, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { ChevronRight, Search, ArrowUpRight, Menu, X } from "lucide-react";
 import { Logo } from "@/components/Logo";
+import { Seo } from "@/components/seo";
 import { cn } from "@/lib/utils";
+
+const DOC_META: Record<string, { title: string; description: string }> = {
+  "/docs": {
+    title: "AnveGuard Docs — OpenAI-compatible AI proxy",
+    description: "Introduction to AnveGuard: inspect, govern, and audit every LLM call your team makes without changing application code.",
+  },
+  "/docs/quickstart": {
+    title: "Quickstart — AnveGuard Docs",
+    description: "Send your first request through AnveGuard in under five minutes by changing one base URL in your existing OpenAI SDK.",
+  },
+  "/docs/concepts": {
+    title: "Concepts — AnveGuard Docs",
+    description: "Core model of AnveGuard: keys, endpoints, providers, routes, policies, and the immutable audit log.",
+  },
+  "/docs/api-keys": {
+    title: "API keys — AnveGuard Docs",
+    description: "Create, scope, rotate, and revoke AnveGuard API keys, and attach per-key policies and rate limits.",
+  },
+  "/docs/endpoints": {
+    title: "Endpoints & providers — AnveGuard Docs",
+    description: "Configure upstream OpenAI-compatible providers and the public endpoints your application calls.",
+  },
+  "/docs/routes": {
+    title: "Routes & fallbacks — AnveGuard Docs",
+    description: "Map model aliases to providers and define automatic fallback chains for resilient AI traffic.",
+  },
+  "/docs/policies": {
+    title: "Policies — AnveGuard Docs",
+    description: "Author keyword, regex, and structural policies that block, warn, or redact requests before they leave your network.",
+  },
+  "/docs/logs": {
+    title: "Logs & audit — AnveGuard Docs",
+    description: "Search every request, response, and admin action with full payload, actor, and timestamp.",
+  },
+  "/docs/proxy-api": {
+    title: "Proxy API reference — AnveGuard Docs",
+    description: "Full reference for AnveGuard's OpenAI-compatible /v1/chat/completions endpoint, including headers and streaming.",
+  },
+  "/docs/errors": {
+    title: "Errors — AnveGuard Docs",
+    description: "Error codes returned by the AnveGuard proxy, what they mean, and how your application should handle them.",
+  },
+  "/docs/faq": {
+    title: "FAQ — AnveGuard Docs",
+    description: "Common operator questions about AnveGuard: latency, providers, on-prem deployment, pricing, and security.",
+  },
+};
+
 
 /**
  * YC-style docs shell.
@@ -77,6 +126,11 @@ const DocsLayout = () => {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
+      <Seo
+        title={(DOC_META[pathname] ?? DOC_META["/docs"]).title}
+        description={(DOC_META[pathname] ?? DOC_META["/docs"]).description}
+        path={pathname}
+      />
       {/* Top bar */}
       <header className="sticky top-0 z-30 h-12 border-b border-border bg-background/85 backdrop-blur">
         <div className="h-full max-w-[1400px] mx-auto px-4 md:px-6 flex items-center justify-between gap-4">

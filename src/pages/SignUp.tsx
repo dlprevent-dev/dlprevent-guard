@@ -2,9 +2,15 @@ import { SignUp } from "@clerk/clerk-react";
 import { Logo } from "@/components/Logo";
 import { AuthShowcasePane } from "@/components/auth/AuthShowcasePane";
 import { QuickstartHelpPanel } from "@/components/quickstart-help-panel";
+import { Seo } from "@/components/seo";
 
 const SignUpPage = () => (
   <div className="min-h-screen grid lg:grid-cols-[480px_1fr] bg-background">
+    <Seo
+      title="Create your account — AnveGuard"
+      description="Sign up for AnveGuard. Free to start, no credit card required — a drop-in proxy for OpenAI-compatible AI requests."
+      path="/sign-up"
+    />
     <div className="flex flex-col px-8 py-10 lg:px-12 lg:py-14">
       <Logo />
       <div className="flex-1 flex flex-col justify-center max-w-sm w-full mt-10 lg:mt-0 mx-auto lg:mx-0">

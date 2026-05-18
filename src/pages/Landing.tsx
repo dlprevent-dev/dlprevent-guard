@@ -8,6 +8,7 @@ import { HeroProductVisual } from "@/components/landing/HeroProductVisual";
 import { QuickstartHelpPanel } from "@/components/quickstart-help-panel";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { Seo } from "@/components/seo";
 
 /**
  * Landing page — YC-style "high-signal, low-decoration" layout.
@@ -154,6 +155,11 @@ const Landing = () => {
 
   return (
   <div className="min-h-screen bg-background text-foreground antialiased [scroll-behavior:smooth] [&_section[id]]:scroll-mt-16">
+    <Seo
+      title="AnveGuard — The control layer for AI requests"
+      description="Drop-in OpenAI-compatible proxy. Enforce policies, log every request, and govern AI usage across providers from a single console."
+      path="/"
+    />
     {/* ------------------------------- Top bar ------------------------------ */}
     <header className="sticky top-0 z-40 border-b border-border bg-background/90 backdrop-blur">
       <div className="mx-auto max-w-6xl px-4 md:px-6 h-12 flex items-center justify-between">
