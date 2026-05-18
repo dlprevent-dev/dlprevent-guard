@@ -563,6 +563,7 @@ const Playground = () => {
                       Create AnveGuard key for "{selectedEndpoint.name}"
                     </Button>
                   </div>
+                )}
                 {selectedKey && (
                   <div className="mt-3 flex items-center gap-2">
                     <Button
