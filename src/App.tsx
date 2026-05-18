@@ -59,6 +59,7 @@ const App = () => (
             <Route path="/sign-up/*" element={<SignUpPage />} />
             <Route path="/dashboard" element={<Protected><ErrorBoundary><DashboardLayout /></ErrorBoundary></Protected>}>
               <Route index element={<Overview />} />
+              <Route path="connect" element={<Connect />} />
               <Route path="keys" element={<Keys />} />
               <Route path="endpoints" element={<Endpoints />} />
               <Route path="providers" element={<Providers />} />
