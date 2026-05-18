@@ -126,6 +126,11 @@ const DocsLayout = () => {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
+      <Seo
+        title={(DOC_META[pathname] ?? DOC_META["/docs"]).title}
+        description={(DOC_META[pathname] ?? DOC_META["/docs"]).description}
+        path={pathname}
+      />
       {/* Top bar */}
       <header className="sticky top-0 z-30 h-12 border-b border-border bg-background/85 backdrop-blur">
         <div className="h-full max-w-[1400px] mx-auto px-4 md:px-6 flex items-center justify-between gap-4">
