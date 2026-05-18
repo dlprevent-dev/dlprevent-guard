@@ -17,7 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Send, ShieldAlert, ShieldCheck, Terminal, KeyRound, Plug, Plus, Clock } from "lucide-react";
+import { Send, ShieldAlert, ShieldCheck, Terminal, KeyRound, Plug, Plus, Clock, Lock } from "lucide-react";
 import { useDashboardApi } from "@/lib/api";
 import { useAuth } from "@clerk/clerk-react";
 import { toast } from "sonner";
@@ -110,6 +110,10 @@ const Playground = () => {
 
   const [selection, setSelection] = useState<Selection>(null);
   const [apiKey, setApiKey] = useState("");
+  // When a key is selected from the dropdown, the Playground signs requests
+  // with the user's Clerk session + `x-anveguard-key-id` so they never need
+  // to paste the once-shown `ag_live_…` secret. Power users testing as an
+  // external app can opt back into the paste flow via `showPasteKey`.
   const [showPasteKey, setShowPasteKey] = useState(false);
   const [model, setModel] = useState<string>("");
   const [prompt, setPrompt] = useState("Write a haiku about firewalls.");
@@ -213,31 +217,34 @@ const Playground = () => {
       );
       return;
     }
-    if (selection?.kind !== "key" || !selectedKey) {
+    if (selection?.kind !== "key") {
       toast.error("Pick an AnveGuard key above to send a request.");
       return;
     }
+    const selectedKeyRow = activeKeys.find((k) => k.id === selection.id);
+    if (!selectedKeyRow) {
+      toast.error("That key is no longer available.");
+      return;
+    }
 
-    // Two auth paths:
-    //  - If the user pasted an ag_live_ secret, use it as a real SDK would.
-    //  - Otherwise, authenticate as the signed-in dashboard user and let the
-    //    proxy resolve the selected key by id (server-side). This avoids
-    //    forcing users to re-paste a secret they can't read back.
+    // Build auth headers. Default = dashboard-session path (no paste needed);
+    // fall back to the manually pasted `ag_live_…` when the user explicitly
+    // opens the paste field.
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (apiKey.trim().length > 0) {
+    if (showPasteKey) {
       if (!apiKey.startsWith("ag_live_")) {
-        toast.error("Paste an AnveGuard key (starts with ag_live_) or clear the field to use your dashboard session.");
+        toast.error("Paste an AnveGuard key (starts with ag_live_) — you can only see it once when you create it.");
         return;
       }
       headers.Authorization = `Bearer ${apiKey}`;
     } else {
       const token = await getToken();
       if (!token) {
-        toast.error("Sign in again to send through your dashboard session.");
+        toast.error("Your dashboard session expired — sign in again to send requests.");
         return;
       }
       headers.Authorization = `Bearer ${token}`;
-      headers["x-anveguard-key-id"] = selectedKey.id;
+      headers["x-anveguard-key-id"] = selectedKeyRow.id;
     }
 
     const effectivePrompt = opts?.promptOverride ?? prompt;
@@ -362,8 +369,8 @@ const Playground = () => {
             body: "Use the dropdown below. Configured endpoints with no key bound show up too — you'll be prompted to create one in a single click.",
           },
           {
-            title: "Pick a key — secret auto-handled",
-            body: <>Selecting a key in the dropdown sends through your signed-in dashboard session, so you don't need to paste the <code className="font-mono text-xs">ag_live_…</code> secret. Paste one only if you're testing a key from another browser.</>,
+            title: "No secret to paste",
+            body: <>Signed-in dashboard users don't need the <code className="font-mono text-xs">ag_live_…</code> value — the Playground signs requests with your dashboard session. Use the "Use a pasted key instead" toggle only if you want to test as an external app.</>,
           },
           {
             title: "Send or run a quick test",
@@ -564,63 +571,59 @@ const Playground = () => {
                     </Button>
                   </div>
                 )}
-                {selectedKey && (
-                  <div className="mt-3 flex items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => send({ promptOverride: SAMPLE_TEST_PROMPT, streamOverride: false, isTest: true })}
-                      disabled={sendDisabled}
-                      title="Send a tiny canned request through the bound endpoint to verify the connection."
-                    >
-                      <Plug className="h-3.5 w-3.5" />
-                      {loading ? "Testing…" : "Test connection"}
-                    </Button>
-                    <span className="text-meta text-muted-foreground">
-                      Fires <code className="font-mono text-[10px]">pong</code> through the proxy to verify upstream + auth.
-                    </span>
-                  </div>
-                )}
               </div>
             )}
-            {selectedKey && !showPasteKey && (
-              <div className="rounded-md border border-border bg-surface-2/40 p-3 flex items-start gap-2">
-                <ShieldCheck className="h-4 w-4 text-status-ok mt-0.5 shrink-0" />
-                <div className="flex-1 min-w-0 text-meta text-muted-foreground">
-                  Sending as <span className="font-medium text-foreground">your dashboard session</span> — no need to paste the secret. The proxy resolves <span className="font-mono">{selectedKey.name}</span> server-side.{" "}
-                  <button
+            <div>
+              <Label htmlFor="ak" className="text-meta uppercase tracking-wider text-muted-foreground inline-flex items-center gap-1.5">
+                AnveGuard API key
+                <HelpHint>
+                  When you pick a key from the dropdown the Playground signs requests with your dashboard session — you only need to paste the <code className="font-mono">ag_live_…</code> secret if you're testing as an external app. The secret is only shown once at creation; AnveGuard stores a hash, not the secret.
+                </HelpHint>
+              </Label>
+              {selectedKey && !showPasteKey ? (
+                <div className="mt-1.5 flex items-center justify-between gap-3 rounded-md border border-border surface-2 px-3 py-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Lock className="h-3.5 w-3.5 text-status-ok shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-meta">
+                        Sending as your dashboard session —{" "}
+                        <span className="font-medium text-foreground">{selectedKey.name}</span>
+                      </div>
+                      <div className="text-[10px] text-muted-foreground font-mono truncate">
+                        {selectedKey.key_prefix}… · no secret needed
+                      </div>
+                    </div>
+                  </div>
+                  <Button
                     type="button"
-                    className="underline underline-offset-2 hover:text-foreground"
+                    size="sm"
+                    variant="ghost"
+                    className="text-meta shrink-0 h-7"
                     onClick={() => setShowPasteKey(true)}
                   >
                     Use a pasted key instead
-                  </button>
+                  </Button>
                 </div>
-              </div>
-            )}
-            {(!selectedKey || showPasteKey) && (
-              <div>
-                <Label htmlFor="ak" className="text-meta uppercase tracking-wider text-muted-foreground inline-flex items-center gap-1.5">
-                  AnveGuard API key
-                  <HelpHint>Paste the <code className="font-mono">ag_live_…</code> secret. It's only shown once at creation — AnveGuard stores a hash, not the secret. Leave blank to send as the signed-in dashboard user.</HelpHint>
-                </Label>
-                <Input
-                  id="ak" value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder={selectedKey ? "ag_live_… (optional — leave blank for dashboard auth)" : "ag_live_…"}
-                  className="mt-1.5 font-mono text-xs surface-2 border-border"
-                />
-                {selectedKey && showPasteKey && (
-                  <button
-                    type="button"
-                    className="mt-1.5 text-meta text-muted-foreground underline underline-offset-2 hover:text-foreground"
-                    onClick={() => { setShowPasteKey(false); setApiKey(""); }}
-                  >
-                    Hide — use dashboard session instead
-                  </button>
-                )}
-              </div>
-            )}
+              ) : (
+                <div className="space-y-1.5">
+                  <Input
+                    id="ak" value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="ag_live_…"
+                    className="mt-1.5 font-mono text-xs surface-2 border-border"
+                  />
+                  {selectedKey && showPasteKey && (
+                    <button
+                      type="button"
+                      onClick={() => { setShowPasteKey(false); setApiKey(""); }}
+                      className="text-meta text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+                    >
+                      ← Use dashboard session instead (no paste needed)
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
             {selectedKey && (
               <div>
                 <Label htmlFor="model" className="text-meta uppercase tracking-wider text-muted-foreground inline-flex items-center gap-1.5">

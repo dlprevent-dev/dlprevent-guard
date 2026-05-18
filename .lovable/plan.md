@@ -1,49 +1,39 @@
-## Goal
+## Context
 
-When you pick an AnveGuard key from the Playground dropdown, you shouldn't have to paste the `ag_live_…` secret again. And the Test action should live right inside the Playground request pane, not only in the page header.
+The actual `ag_live_…` secret **cannot be prefilled from storage** — AnveGuard only keeps a salted hash, and the plaintext is shown exactly once at creation. So "prefill the AnveGuard API key field" cannot mean "fetch the secret and drop it in the input".
 
-## Why the paste is required today
+What it can (and should) mean: when a signed-in dashboard user picks a key from the dropdown, the Playground proves identity with their Clerk session + the chosen key's ID, and the proxy authorizes the request without the user touching `ag_live_…` at all. The current Playground does not do this (the earlier implementation was lost during the recent `main` ↔ edit-branch sync drift), which is why you're back to pasting the secret manually.
 
-The proxy authenticates by hashing the incoming `Authorization: Bearer ag_live_…` and looking up the key row. Raw secrets are never stored — they're shown once at creation and gone. So "autofetch the key" can't mean "read the secret back from the server". Instead we let the dashboard itself send on behalf of the user, using their Clerk session.
+## Plan
 
-## Approach
+### 1. Edge function: dual auth path (`supabase/functions/proxy/index.ts`)
 
-Add a **dashboard-authenticated bypass path** to the proxy: when the caller is a signed-in dashboard user (Clerk JWT, not `ag_live_…`), the proxy accepts an `x-anveguard-key-id` header and resolves the key server-side after verifying the key belongs to that user's workspace. All policy / logging / rate-limit behavior stays identical — it's just an alternate authentication on the proxy edge.
+Add a `resolveProxyKeyAuth(req)` helper used by every proxy handler that needs a key. It accepts either:
 
-Frontend then stops asking for the secret whenever a key is selected from the dropdown.
+- **A.** `Authorization: Bearer ag_live_…` — current behaviour, hash + lookup.
+- **B.** `Authorization: Bearer <Clerk JWT>` plus `x-anveguard-key-id: <uuid>` — verify the JWT, load the key row by id, require `key.user_id === claims.sub`. No secret needed.
 
-## Changes
+Both paths return the same resolved `{ keyRow, endpoint }` shape so downstream code is unchanged. Path B is only honoured for requests originating from the dashboard session — the public `ag_live_…` flow for end-user apps is untouched.
 
-### Backend — `supabase/functions/proxy/index.ts`
-- Branch at the top of the request:
-  - If `Authorization: Bearer ag_live_…` → existing path, unchanged.
-  - Else if `Authorization: Bearer <Clerk JWT>` **and** header `x-anveguard-key-id` is present → verify Clerk JWT, load the api_key row, assert `api_key.user_id === claims.sub` (or workspace membership for shared endpoints), then continue with that key as if it had been resolved from a secret.
-  - Else → existing 401.
-- Tag logs from this path with `source: "playground"` (new column already supported, or stash in `metadata`) so production traffic and dashboard tests are distinguishable in Logs.
-- Reject this bypass for any key whose `is_active = false` or whose endpoint is shared-but-not-owned-by caller.
+### 2. Playground frontend (`src/pages/dashboard/Playground.tsx`)
 
-### Frontend — `src/pages/dashboard/Playground.tsx`
-- Drop the manual `ag_live_…` input whenever `selection.kind === "key"`. Keep it only as a fallback when the user wants to test a key from another browser (collapsible "Use a pasted key instead" link).
-- `send()` becomes: if a key is selected, send with Clerk token + `x-anveguard-key-id: <selectedKey.id>`; otherwise fall back to the pasted secret.
-- Add an inline **"Test connection"** button inside the request pane, directly under the key picker (in addition to the existing header button). One click sends the canned `Reply with the single word: pong.` non-streamed and shows pass/fail next to the picker — no need to touch the prompt area.
-- Update the HelpPanel copy: step 2 ("Paste the key secret") is replaced with "Pick a key — the dashboard authenticates for you. Paste a key only if it was created in another browser."
+- When `selectedKey` is set, the AnveGuard API key input collapses to a read-only badge: **"Using your dashboard session — `perplexity-e2e`"** with a small "Use a pasted key instead" link that re-reveals the input (fallback for power users / shared screens).
+- All outbound proxy calls (chat/completions, models list, test-connection) get a new `buildAuthHeaders()` helper:
+  - If session mode → `Authorization: Bearer <clerk-token>` + `x-anveguard-key-id: <selectedKey.id>`.
+  - Else → existing `Authorization: Bearer <pasted ag_live_…>`.
+- The "1 configured endpoint can't be used yet" banner stays as-is — that's about endpoints with **no** bound key, which is a separate problem.
 
-### Tests
-- New Deno test in `supabase/functions/proxy/`: dashboard-JWT + `x-anveguard-key-id` path returns 200 for owner, 403 for cross-user, 401 for missing header.
-- Update `e2e/07-full-journey.spec.ts` step 3/4: the Playground steps no longer fill the `ag_live_…` field once a key is selected; assert the new inline Test button works.
-- Leave the existing pasted-key tests in place (covers the fallback).
+### 3. Help copy
 
-## Out of scope
+Update the `HelpHint` next to the key field and the `HelpPanel` step that says "paste your `ag_live_…`" so signed-in users see: *"When you pick a key from the dropdown the Playground signs requests with your dashboard session — you only need to paste a secret if you're testing as an external app."*
 
-- No change to production proxy clients — they still send `ag_live_…` and nothing about that path changes.
-- No persistent client-side caching of secrets.
-- No new tables or migrations.
+### Files touched
 
-## Files touched
+- `supabase/functions/proxy/index.ts` — add `resolveProxyKeyAuth`, wire it into the request handlers.
+- `src/pages/dashboard/Playground.tsx` — `showPasteKey` state, collapsed indicator, `buildAuthHeaders`, update the three call sites.
 
-```text
-supabase/functions/proxy/index.ts          (auth branch + tests)
-supabase/functions/proxy/*_test.ts         (new cases)
-src/pages/dashboard/Playground.tsx         (UI + send logic + inline Test)
-e2e/07-full-journey.spec.ts                (drop paste step, add Test assertion)
-```
+### Out of scope
+
+- Recovering / displaying the original `ag_live_…` secret (cryptographically impossible; would require switching from hashing to reversible encryption — explicit security regression, not doing it).
+- The unbound-endpoint banner and any changes to key creation.
+- The previously-discussed "Test connection" button — say the word and I'll fold it back in here too, since that work also got lost.

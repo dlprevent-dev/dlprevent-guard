@@ -602,6 +602,73 @@ async function handleAudioTranscription(
   });
 }
 
+/**
+ * Resolve the AnveGuard key row for a proxy request via either:
+ *   A. Public path — `Authorization: Bearer ag_live_…` (or x-api-key / ?key=),
+ *      hashed and looked up by `key_hash`. Unchanged behaviour for external SDKs.
+ *   B. Dashboard session — `Authorization: Bearer <Clerk JWT>` plus
+ *      `x-anveguard-key-id: <uuid>`. JWT is verified, key row is loaded by id,
+ *      and `key.user_id === claims.sub` is enforced. Lets the in-app Playground
+ *      send requests without the user pasting the once-shown `ag_live_…` secret.
+ *
+ * Returns `{ keyRow }` on success or `{ error: { message, code } }` on failure.
+ * Callers translate the error through their own error envelope.
+ */
+async function resolveProxyKeyAuth(
+  sb: ReturnType<typeof service>,
+  req: Request,
+  selectColumns: string,
+): Promise<{ keyRow: any | null; error?: { message: string; code: string } }> {
+  const reqUrl = new URL(req.url);
+  const authHeader = req.headers.get("Authorization") || req.headers.get("authorization") || "";
+  const xApiKey = req.headers.get("x-api-key") || req.headers.get("X-API-Key") || "";
+  const queryKey = reqUrl.searchParams.get("key") || "";
+  const sessionKeyId =
+    req.headers.get("x-anveguard-key-id") || req.headers.get("X-AnveGuard-Key-Id") || "";
+
+  // Path A — public secret in any standard slot.
+  const bearerAg = authHeader.match(/^Bearer\s+(ag_live_\S+)/i)?.[1];
+  const apiKeyPlain = bearerAg
+    || (xApiKey.startsWith("ag_live_") ? xApiKey : "")
+    || (queryKey.startsWith("ag_live_") ? queryKey : "");
+  if (apiKeyPlain) {
+    const key_hash = await sha256Hex(apiKeyPlain);
+    const { data } = await sb.from("api_keys")
+      .select(selectColumns).eq("key_hash", key_hash).maybeSingle();
+    if (!data || !(data as any).is_active) {
+      return { keyRow: null, error: { message: "Invalid or revoked API key.", code: "invalid_api_key" } };
+    }
+    return { keyRow: data };
+  }
+
+  // Path B — dashboard session (Clerk JWT + key id header).
+  const bearerAny = authHeader.match(/^Bearer\s+(\S+)/i)?.[1];
+  if (bearerAny && sessionKeyId) {
+    let claims: { sub: string };
+    try { claims = await verifyClerkJwt(bearerAny); }
+    catch {
+      return { keyRow: null, error: { message: "Invalid dashboard session token.", code: "invalid_session" } };
+    }
+    const { data } = await sb.from("api_keys")
+      .select(selectColumns).eq("id", sessionKeyId).maybeSingle();
+    if (!data || !(data as any).is_active) {
+      return { keyRow: null, error: { message: "Invalid or revoked API key.", code: "invalid_api_key" } };
+    }
+    if ((data as any).user_id !== claims.sub) {
+      return { keyRow: null, error: { message: "Key does not belong to the current dashboard session.", code: "key_session_mismatch" } };
+    }
+    return { keyRow: data };
+  }
+
+  return {
+    keyRow: null,
+    error: {
+      message: "Missing API key. Provide it in the Authorization header (Bearer ag_live_…), the x-api-key header, or the ?key= query param.",
+      code: "missing_api_key",
+    },
+  };
+}
+
 async function rateLimitedAuthFailure(
   sb: ReturnType<typeof service>,
   req: Request,
@@ -620,83 +687,6 @@ async function rateLimitedAuthFailure(
     });
   }
   return errorResponse(shape, 401, message, { code });
-}
-
-/**
- * Resolve the API key row for a proxy request. Two auth paths supported:
- *
- *  1. **Production / SDK path** — `Authorization: Bearer ag_live_…` (or
- *     `x-api-key`, or `?key=`). Hashed and matched against `api_keys.key_hash`.
- *     This is what real client integrations always use.
- *
- *  2. **Dashboard playground path** — `Authorization: Bearer <Clerk JWT>` plus
- *     a `x-anveguard-key-id` header. Used by the in-app Playground so the
- *     signed-in dashboard user doesn't need to paste a raw `ag_live_…` secret
- *     they can't read back. We verify the Clerk JWT, then load the key by id
- *     AND by `user_id === claims.sub` — so a stolen key id cannot be used from
- *     another account, and shared endpoints owned by someone else can't be
- *     impersonated.
- *
- * Returns the same `keyRow` shape in both cases, so callers don't need to
- * branch. The `source` field is exposed so request logs can distinguish
- * dashboard test traffic from real production traffic.
- */
-async function resolveProxyKeyAuth(
-  sb: ReturnType<typeof service>,
-  req: Request,
-  selectColumns: string,
-): Promise<
-  | { ok: true; keyRow: any; source: "secret" | "dashboard" }
-  | { ok: false; code: string; message: string }
-> {
-  const authHeader = req.headers.get("Authorization") || req.headers.get("authorization") || "";
-  const xApiKey = req.headers.get("x-api-key") || req.headers.get("X-API-Key") || "";
-  const reqUrl = new URL(req.url);
-  const queryKey = reqUrl.searchParams.get("key") || "";
-  const agBearer = authHeader.match(/^Bearer\s+(ag_live_\S+)/i)?.[1];
-  const apiKeyPlain = agBearer
-    || (xApiKey.startsWith("ag_live_") ? xApiKey : "")
-    || (queryKey.startsWith("ag_live_") ? queryKey : "");
-
-  if (apiKeyPlain) {
-    const key_hash = await sha256Hex(apiKeyPlain);
-    const { data: keyRow } = await sb.from("api_keys")
-      .select(selectColumns)
-      .eq("key_hash", key_hash).maybeSingle();
-    if (!keyRow || !keyRow.is_active) {
-      return { ok: false, code: "invalid_api_key", message: "Invalid or revoked API key." };
-    }
-    return { ok: true, keyRow, source: "secret" };
-  }
-
-  // Dashboard bypass: Clerk JWT + x-anveguard-key-id header. Only takes
-  // effect when there's no ag_live_ secret — production clients are never
-  // affected.
-  const dashKeyId = req.headers.get("x-anveguard-key-id") || req.headers.get("X-AnveGuard-Key-Id") || "";
-  const anyBearer = authHeader.match(/^Bearer\s+(\S+)/i)?.[1];
-  if (dashKeyId && anyBearer) {
-    let claims: { sub: string };
-    try {
-      claims = await verifyClerkJwt(anyBearer);
-    } catch {
-      return { ok: false, code: "invalid_api_key", message: "Invalid dashboard session — sign in again and retry." };
-    }
-    const { data: keyRow } = await sb.from("api_keys")
-      .select(selectColumns)
-      .eq("id", dashKeyId)
-      .eq("user_id", claims.sub)
-      .maybeSingle();
-    if (!keyRow || !keyRow.is_active) {
-      return { ok: false, code: "invalid_api_key", message: "Key not found, not yours, or revoked." };
-    }
-    return { ok: true, keyRow, source: "dashboard" };
-  }
-
-  return {
-    ok: false,
-    code: "missing_api_key",
-    message: "Missing API key. Provide it in the Authorization header (Bearer ag_live_…), the x-api-key header, or the ?key= query param.",
-  };
 }
 
 // ---- SSE helpers -----------------------------------------------------------
@@ -873,17 +863,15 @@ Deno.serve(async (req) => {
  */
 async function handleListModels(req: Request): Promise<Response> {
   const sb = service();
-  const reqUrl = new URL(req.url);
 
-  const authResult = await resolveProxyKeyAuth(
-    sb,
-    req,
+  const auth = await resolveProxyKeyAuth(
+    sb, req,
     "id,user_id,provider,provider_key_encrypted,is_active,custom_base_url,custom_models_url,custom_kind,custom_auth_scheme,custom_auth_header,custom_extra_headers,custom_path_prefix,custom_chat_path,custom_models_path,custom_response_format",
   );
-  if (!authResult.ok) {
-    return errorResponse("openai", authResult.code === "missing_api_key" ? 401 : 401, authResult.message, { code: authResult.code });
+  if (auth.error || !auth.keyRow) {
+    return errorResponse("openai", 401, auth.error?.message ?? "Unauthorized", { code: auth.error?.code ?? "invalid_api_key" });
   }
-  const keyRow = authResult.keyRow;
+  const keyRow = auth.keyRow;
 
   // Resolve upstream credentials the same way /v1/chat/completions does.
   let upstreamKey: string | null = null;
@@ -949,19 +937,24 @@ async function handleRequest(req: Request): Promise<Response> {
   // this AFTER shape detection but BEFORE the chat-only auth/parse pipeline
   // keeps the handler self-contained.
 
-  // ---- Auth: accept the AnveGuard key in whatever header the SDK sends.
+  // ---- Auth: accept the AnveGuard key in whatever header the SDK sends, OR
+  // a Clerk session token + `x-anveguard-key-id` for in-dashboard callers
+  // (Playground). See resolveProxyKeyAuth for both paths.
   //   - OpenAI / generic:    Authorization: Bearer ag_live_…
   //   - Anthropic SDK:       x-api-key: ag_live_…
   //   - Google Gemini SDK:   ?key=ag_live_…
-  const authResult = await resolveProxyKeyAuth(
-    sb,
-    req,
+  //   - Dashboard session:   Authorization: Bearer <Clerk JWT> + x-anveguard-key-id
+  const auth = await resolveProxyKeyAuth(
+    sb, req,
     "id,user_id,provider,provider_key_encrypted,model_default,is_active,is_admin,compression_mode,custom_base_url,custom_models_url,custom_kind,custom_auth_scheme,custom_auth_header,custom_extra_headers,custom_path_prefix,custom_chat_path,custom_models_path,custom_response_format",
   );
-  if (!authResult.ok) {
-    return await rateLimitedAuthFailure(sb, req, reqShape, authResult.message, authResult.code);
+  if (auth.error || !auth.keyRow) {
+    return await rateLimitedAuthFailure(sb, req, reqShape,
+      auth.error?.message ?? "Unauthorized",
+      auth.error?.code ?? "invalid_api_key");
   }
-  const keyRow = authResult.keyRow;
+  const keyRow = auth.keyRow;
+
 
   // Phase 5 — audio transcription. Body is multipart/form-data (file upload),
   // NOT JSON. Branch BEFORE the JSON parse so req.body is still readable as
