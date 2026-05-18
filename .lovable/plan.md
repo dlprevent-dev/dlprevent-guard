@@ -1,67 +1,75 @@
 ## Goal
 
-Make the core flow one obvious thing:
+One AnveGuard API key, multiple LLM providers behind it. Users connect OpenAI, Anthropic, OpenRouter, Ollama, etc. under a single `ag_live_*` key and pick the provider per request by passing a model name (e.g. `gpt-4o`, `claude-sonnet`, `llama3-local`). All traffic stays inside the same policy/guardrail/logging context.
 
-> **Paste a provider key → AnveGuard returns an OpenAI-compatible URL + key → every call goes through guardrails and shows up in Logs.**
+## What already exists (no backend changes needed)
 
-The plumbing for this already exists (`create_key` in `dashboard` edge function already accepts `provider`, `provider_key`, and `custom` and binds a new `ag_live_*` key to the upstream). The change is mostly UX + a guided wizard, not new backend.
+- `endpoints` table — stores per-provider upstream config (base_url, key, auth, paths).
+- `model_aliases` table — maps `(api_key_id, alias)` → `(target_model, target_endpoint_id)`. The proxy already swaps to the alias's target endpoint at request time (see `proxy/index.ts` ~L956–966, L1443–1451).
+- Dashboard actions: `save_endpoint`, `list_endpoints`, `save_alias`, `list_aliases`, `delete_alias`.
+- One AnveGuard key (`api_keys` row) can already fan out to N endpoints via aliases — the UI just doesn't expose it as a first-class concept.
 
-## What changes
+## What changes (frontend only)
 
-### 1. New "Connect" wizard (primary entry point)
+### 1. Rework `Connect.tsx` into a "Workspace" model
 
-New page `src/pages/dashboard/Connect.tsx` and route `/dashboard/connect`. Three-step single-screen wizard:
+Current wizard: pick 1 provider → paste key → get AnveGuard key (1:1).
 
-1. **Pick provider** — visual grid: OpenAI, Anthropic, Google, OpenRouter, Perplexity, Ollama, Groq, Mistral, "Custom OpenAI-compatible". Each tile shows logo, short description, and a "Get key →" deep-link to the provider's key page.
-2. **Paste key + test** — single field for the provider key, "Test connection" button (already implemented as `test_custom_endpoint` / live key list call), inline pass/fail with the first model name on success.
-3. **Get your AnveGuard credentials** — calls `create_key`, then shows:
-   - `Base URL: https://anveguard.app/v1` (copy)
-   - `API Key: ag_live_…` (copy, one-time reveal)
-   - 3-tab snippet (Python / Node / curl) prefilled with the new key
-   - "Send a test request" button that fires a tiny chat completion through the proxy and links to the resulting Logs row.
+New wizard:
 
-Make this the default landing page for empty workspaces (no keys yet) — the existing `Overview` "Next step" card links here.
+```
+Step 1 — Name your AnveGuard workspace
+   "Production", "Staging", etc. → becomes the api_keys.name
 
-### 2. Reframe Keys + Endpoints
+Step 2 — Connect providers (repeatable)
+   [+ Add provider] tile grid: OpenAI / Anthropic / OpenRouter / Perplexity /
+   Gemini / Groq / Mistral / Ollama / Lovable AI / Custom
+   For each: paste key → Test → save as an endpoint row
+   Show a running list of connected providers with status chips
+   User can add as many as they want, then continue
 
-- **Keys page**: rename primary CTA from "New key" to **"Connect a provider"** → opens the new wizard. Keep the existing table.
-- **Endpoints page**: demote to **"Advanced → Custom endpoints"** in the sidebar. Add a callout at top: *"Most users don't need this. Use Connect to add OpenAI, Anthropic, OpenRouter, Perplexity, Ollama, and more in one click."*
-- Sidebar order: `Overview · Connect · Logs · Threats · Policies · Playground · ··· Advanced (Endpoints · Routes · Providers · Alerts)`.
+Step 3 — Map model names (auto + manual)
+   For each connected provider, auto-suggest aliases from its default model list:
+     gpt-4o            → openai endpoint, model gpt-4o
+     claude-sonnet-4   → anthropic endpoint, model claude-sonnet-4-...
+     llama3            → ollama endpoint,  model llama3
+   User can rename aliases, remove, or add custom ones.
+   Show a preview: "Calling model: X → routes to Y on provider Z"
 
-### 3. Provider catalog expansion
+Step 4 — Your AnveGuard credentials
+   Base URL + ag_live_* key + 3-tab snippets (Python / Node / curl)
+   Snippets show 2–3 example model calls demonstrating multi-provider routing
+   "Send test request" button picks one alias and fires it
+```
 
-`list_providers` in `supabase/functions/dashboard/index.ts` already returns the provider list + a custom-endpoint template list. Add first-class entries (with logo + key-URL + default model) for:
+### 2. Reframe sidebar + existing pages
 
-- OpenRouter (`https://openrouter.ai/api/v1`, key page `https://openrouter.ai/keys`)
-- Perplexity (`https://api.perplexity.ai`, key page `https://www.perplexity.ai/settings/api`)
-- Ollama (default `http://localhost:11434/v1`, no key, with a banner: "Your proxy must reach this host")
-- Groq (`https://api.groq.com/openai/v1`)
-- Mistral (`https://api.mistral.ai/v1`)
+- `Keys` page: each AnveGuard key card now shows a "Connected providers" sub-list (count + chips) and a "Models" sub-list (alias count). "Manage" deep-links into the wizard in edit mode for that key.
+- `Endpoints` page: keep as-is for power users, but the callout becomes "Managed automatically by Connect — edit here only for advanced cases."
+- `Routes` page: unchanged (multi-step fallback chains are a separate concept).
 
-These are templates today; promoting them to first-class providers gives them logos + 1-click selection in the wizard.
+### 3. Edit mode for an existing workspace
 
-### 4. Landing-page tweak (small)
+Hitting `/dashboard/connect?key=<api_key_id>` loads existing endpoints+aliases tied to that key and lets the user add/remove providers and aliases in place. Same UI, pre-populated.
 
-Update the "How it works" / quickstart copy to mirror the wizard's 3 steps verbatim so visitors land on the page already understanding it: *Paste provider key → Get OpenAI-compatible URL → Ship.*
+### 4. Landing page copy tweak
 
-## What stays the same
-
-- Proxy edge function, policy engine, guardrails, logging — zero changes. Every call still flows through the same pipeline that's already shipping.
-- Existing Endpoints/Routes/Aliases for power users — untouched, just demoted in nav.
-- Existing keys keep working (no data migration).
-
-## Technical notes
-
-- Connect wizard is pure frontend; it calls existing `list_providers`, `test_custom_endpoint`, and `create_key` dashboard actions.
-- Provider catalog additions are a small edit to the static list in `dashboard/index.ts`'s `list_providers` handler — no migration needed.
-- "Send a test request" button calls the live `proxy` function with the new key + a 1-token completion to populate Logs immediately, then `navigate('/dashboard/logs?focus=…')`.
+Update the "How it works" section to: "Connect one or many LLMs → get one AnveGuard key → call any model from any app." Reflects the multi-provider story.
 
 ## Out of scope
 
-- New providers that aren't OpenAI-compatible at the wire level (would need new adapter code).
-- Billing / spend caps.
-- Per-key budgets (already on roadmap).
+- No DB migration. No proxy changes. No new providers beyond the existing catalog.
+- No automatic failover/routing rules (that's `Routes`).
+- No billing/spend caps per provider.
 
-## Deliverable
+## Technical notes
 
-A new `/dashboard/connect` wizard that takes a user from "I have an OpenAI key" to "I have an AnveGuard URL + key + first request visible in Logs" in well under 60 seconds, with Endpoints reframed as the advanced escape hatch.
+- Aliases are scoped to `(api_key_id, alias)` — the wizard groups by `api_key_id` so one workspace = one key + N endpoints + N aliases.
+- The proxy already honors `target_endpoint_id` on an alias, so no resolver changes.
+- Default alias suggestions come from each provider's `model_suggestions` (already on `endpoints`).
+
+Files touched (estimate):
+- `src/pages/dashboard/Connect.tsx` — rewrite to multi-step + repeatable provider list
+- `src/pages/dashboard/Keys.tsx` — add providers/models sub-list per card
+- `src/pages/dashboard/Endpoints.tsx` — callout copy
+- `src/pages/Landing.tsx` — "How it works" copy
