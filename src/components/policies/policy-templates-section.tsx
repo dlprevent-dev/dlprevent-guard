@@ -244,14 +244,24 @@ export function PolicyTemplatesSection() {
   const [pending, setPending] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Template | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardSeed, setWizardSeed] = useState<WizardInitialTemplate | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [testTpl, setTestTpl] = useState<Template | null>(null);
   const [historyTpl, setHistoryTpl] = useState<Template | null>(null);
+  const [resetTarget, setResetTarget] = useState<{ id: string; name: string } | null>(null);
 
   const customQ = useQuery<{ templates: any[] }>({
     queryKey: ["policy_templates"],
     queryFn: () => call("list_policy_templates"),
   });
+
+  const allRows = customQ.data?.templates ?? [];
+  // Per-builtin override: a saved template row tagged with a builtin_id.
+  const overrideByBuiltin = useMemo(() => {
+    const m: Record<string, any> = {};
+    for (const r of allRows) if (r.builtin_id) m[r.builtin_id] = r;
+    return m;
+  }, [allRows]);
 
   const apply = useMutation({
     mutationFn: async (tpl: Template) => {
@@ -260,7 +270,11 @@ export function PolicyTemplatesSection() {
         await call("save_policies", { body: tpl.policy });
       }
       if (tpl.settings && Object.keys(tpl.settings).length) {
-        await call("save_policy_settings", { body: tpl.settings });
+        // Strip wizard-only fields (e.g. card highlights) before saving live settings.
+        const { __highlights: _h, ...liveSettings } = tpl.settings as Record<string, unknown>;
+        if (Object.keys(liveSettings).length) {
+          await call("save_policy_settings", { body: liveSettings });
+        }
       }
       if (tpl.rules?.length) {
         for (const rule of tpl.rules) {
@@ -287,38 +301,100 @@ export function PolicyTemplatesSection() {
       toast.success("Template deleted");
       qc.invalidateQueries({ queryKey: ["policy_templates"] });
       setDeleteId(null);
+      setResetTarget(null);
     },
     onError: (e: any) => toast.error(e?.message ?? "Failed to delete template"),
   });
 
-  const customTemplates: Template[] = (customQ.data?.templates ?? []).map((t: any) => ({
-    id: t.id,
-    name: t.name,
-    tagline: t.description || "Custom template",
-    icon: <User className="h-4 w-4" />,
-    accent: "text-foreground",
-    highlights: [
-      `${Array.isArray(t.rules) ? t.rules.length : 0} rule${(Array.isArray(t.rules) ? t.rules.length : 0) === 1 ? "" : "s"}`,
-      `${Object.keys(t.settings ?? {}).length} setting${Object.keys(t.settings ?? {}).length === 1 ? "" : "s"}`,
-      ((t.policy?.blocked_keywords?.length ?? 0) + (t.policy?.allowed_keywords?.length ?? 0))
-        ? `${(t.policy?.blocked_keywords?.length ?? 0) + (t.policy?.allowed_keywords?.length ?? 0)} keywords`
-        : "No keyword snapshot",
-      Array.isArray(t.applies_to_intents) && t.applies_to_intents.length
-        ? `Intents: ${t.applies_to_intents.slice(0, 3).join(", ")}${t.applies_to_intents.length > 3 ? "…" : ""}`
-        : "All intents",
-      `Unknown intent → ${
-        t.unknown_intent_fallback === "reject" ? "reject"
-        : t.unknown_intent_fallback === "apply_default_rules" ? "apply rules"
-        : "skip rules"
-      }`,
-    ],
-    policy: t.policy ?? {},
-    settings: t.settings ?? {},
-    rules: Array.isArray(t.rules) ? t.rules : [],
-    applies_to_intents: Array.isArray(t.applies_to_intents) ? t.applies_to_intents : [],
-    unknown_intent_fallback: t.unknown_intent_fallback ?? "apply_no_rules",
-    custom: true,
-  } as Template & { custom?: boolean }));
+  // Built-in templates merged with their overrides (if any).
+  const builtinTemplates: (Template & { overridden?: boolean; builtinId: string })[] = TEMPLATES.map((tpl) => {
+    const ov = overrideByBuiltin[tpl.id as string];
+    if (!ov) return { ...tpl, builtinId: tpl.id as string };
+    const highlights = Array.isArray(ov.settings?.__highlights) && ov.settings.__highlights.length
+      ? ov.settings.__highlights
+      : tpl.highlights;
+    return {
+      ...tpl,
+      builtinId: tpl.id as string,
+      name: ov.name || tpl.name,
+      tagline: ov.description || tpl.tagline,
+      highlights,
+      policy: ov.policy ?? tpl.policy,
+      settings: ov.settings ?? tpl.settings,
+      rules: Array.isArray(ov.rules) ? ov.rules : tpl.rules,
+      applies_to_intents: ov.applies_to_intents ?? tpl.applies_to_intents,
+      unknown_intent_fallback: ov.unknown_intent_fallback ?? tpl.unknown_intent_fallback,
+      overridden: true,
+    };
+  });
+
+  const customTemplates: Template[] = allRows
+    .filter((t: any) => !t.builtin_id)
+    .map((t: any) => ({
+      id: t.id,
+      name: t.name,
+      tagline: t.description || "Custom template",
+      icon: <User className="h-4 w-4" />,
+      accent: "text-foreground",
+      highlights: Array.isArray(t.settings?.__highlights) && t.settings.__highlights.length
+        ? t.settings.__highlights
+        : [
+            `${Array.isArray(t.rules) ? t.rules.length : 0} rule${(Array.isArray(t.rules) ? t.rules.length : 0) === 1 ? "" : "s"}`,
+            `${Object.keys(t.settings ?? {}).filter((k) => k !== "__highlights").length} setting${Object.keys(t.settings ?? {}).filter((k) => k !== "__highlights").length === 1 ? "" : "s"}`,
+            ((t.policy?.blocked_keywords?.length ?? 0) + (t.policy?.allowed_keywords?.length ?? 0))
+              ? `${(t.policy?.blocked_keywords?.length ?? 0) + (t.policy?.allowed_keywords?.length ?? 0)} keywords`
+              : "No keyword snapshot",
+          ],
+      policy: t.policy ?? {},
+      settings: t.settings ?? {},
+      rules: Array.isArray(t.rules) ? t.rules : [],
+      applies_to_intents: Array.isArray(t.applies_to_intents) ? t.applies_to_intents : [],
+      unknown_intent_fallback: t.unknown_intent_fallback ?? "apply_no_rules",
+      custom: true,
+    } as Template & { custom?: boolean }));
+
+  const openWizard = (seed: WizardInitialTemplate | null) => {
+    setWizardSeed(seed);
+    setWizardOpen(true);
+  };
+
+  const editBuiltin = (tpl: Template & { builtinId: string }) => openWizard({
+    builtin_id: tpl.builtinId,
+    name: tpl.name,
+    description: tpl.tagline,
+    highlights: tpl.highlights,
+    policy: tpl.policy as Record<string, any>,
+    settings: tpl.settings as Record<string, any>,
+    rules: (tpl.rules ?? []) as any,
+    applies_to_intents: tpl.applies_to_intents ?? [],
+    unknown_intent_fallback: tpl.unknown_intent_fallback,
+    mode: "edit_builtin",
+  });
+
+  const duplicateBuiltin = (tpl: Template) => openWizard({
+    name: tpl.name,
+    description: tpl.tagline,
+    highlights: tpl.highlights,
+    policy: tpl.policy as Record<string, any>,
+    settings: tpl.settings as Record<string, any>,
+    rules: (tpl.rules ?? []) as any,
+    applies_to_intents: tpl.applies_to_intents ?? [],
+    unknown_intent_fallback: tpl.unknown_intent_fallback,
+    mode: "duplicate",
+  });
+
+  const editCustom = (tpl: Template) => openWizard({
+    id: tpl.id,
+    name: tpl.name,
+    description: tpl.tagline === "Custom template" ? "" : tpl.tagline,
+    highlights: tpl.highlights,
+    policy: tpl.policy as Record<string, any>,
+    settings: tpl.settings as Record<string, any>,
+    rules: (tpl.rules ?? []) as any,
+    applies_to_intents: tpl.applies_to_intents ?? [],
+    unknown_intent_fallback: tpl.unknown_intent_fallback,
+    mode: "edit_custom",
+  });
 
   return (
     <>
