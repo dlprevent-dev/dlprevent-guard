@@ -448,8 +448,11 @@ const Connect = () => {
     }
   };
 
+  // `nextStep` lets Step 1's two CTAs decide where to land after creation:
+  //   2 → "Add more LLMs" (N:1 unified gateway)
+  //   3 → straight to credentials (1:1 simple drop-in)
   const createKey = useMutation({
-    mutationFn: () =>
+    mutationFn: (_opts: { nextStep: 2 | 3 }) =>
       call<{ id: string; full_key: string }>("create_key", {
         body: {
           name: name.trim() || `${tile?.label} workspace`,
@@ -459,11 +462,15 @@ const Connect = () => {
           custom: tile?.provider === "custom" ? customPayload : undefined,
         },
       }),
-    onSuccess: (res) => {
+    onSuccess: (res, vars) => {
       setCreated({ fullKey: res.full_key, id: res.id });
-      setStep(2); // jump to "add more LLMs"
+      setStep(vars.nextStep);
       qc.invalidateQueries({ queryKey: ["keys"] });
-      toast.success("AnveGuard key created — add more LLMs or finish.");
+      toast.success(
+        vars.nextStep === 2
+          ? "AnveGuard key created — attach more LLMs."
+          : "AnveGuard key created — copy your credentials.",
+      );
     },
     onError: (e: Error) => toast.error(e.message),
   });
