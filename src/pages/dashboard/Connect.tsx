@@ -9,6 +9,7 @@ import {
   ExternalLink,
   KeyRound,
   Loader2,
+  Pencil,
   Plug,
   Plus,
   ShieldCheck,
