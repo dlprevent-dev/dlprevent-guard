@@ -36,7 +36,6 @@ export const PROVIDERS: ProviderDef[] = [
     label: "Lovable AI (managed)",
     kind: "openai_compatible",
     url: "https://ai.gateway.lovable.dev/v1/chat/completions",
-    models_url: "https://ai.gateway.lovable.dev/v1/models",
     managed: true,
     default_model: "google/gemini-3-flash-preview",
     model_suggestions: [
