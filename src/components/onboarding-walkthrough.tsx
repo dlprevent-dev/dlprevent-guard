@@ -229,20 +229,48 @@ export function OnboardingWalkthrough() {
           </div>
         )}
 
-        {/* Celebrate step: deeper learning callout. */}
+        {/* Celebrate step: deeper learning callout + tour CTAs. */}
         {current.kind === "celebrate" && (
-          <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-xs">
-            <div className="flex items-center gap-2 mb-1.5">
-              <Activity className="h-3.5 w-3.5 text-primary" />
-              <span className="font-semibold">Where to go next</span>
+          <div className="space-y-2">
+            <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-xs">
+              <div className="flex items-center gap-2 mb-1.5">
+                <Activity className="h-3.5 w-3.5 text-primary" />
+                <span className="font-semibold">Where to go next</span>
+              </div>
+              <ul className="space-y-1 text-muted-foreground pl-5 list-disc">
+                <li><strong>Logs</strong> — full audit history with verdict layers, replay any request</li>
+                <li><strong>Threats</strong> — live blocked-attack activity + per-rule breakdown</li>
+                <li><strong>Policies</strong> — add custom keywords / regex / intents</li>
+                <li><strong>Alerts</strong> — webhook notifications for anomalies</li>
+                <li><strong>Docs</strong> — in-app guides, API reference, error catalogue</li>
+              </ul>
             </div>
-            <ul className="space-y-1 text-muted-foreground pl-5 list-disc">
-              <li><strong>Logs</strong> — full audit history with verdict layers, replay any request</li>
-              <li><strong>Threats</strong> — live blocked-attack activity + per-rule breakdown</li>
-              <li><strong>Policies</strong> — add custom keywords / regex / intents</li>
-              <li><strong>Alerts</strong> — webhook notifications for anomalies</li>
-              <li><strong>Docs</strong> — in-app guides, API reference, error catalogue</li>
-            </ul>
+            <div className="rounded-md border border-border bg-surface-2 p-3 text-xs">
+              <div className="flex items-center gap-2 mb-1.5">
+                <BookOpen className="h-3.5 w-3.5 text-primary" />
+                <span className="font-semibold">Or take an interactive tour</span>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline" size="sm" className="text-xs"
+                  onClick={() => {
+                    dismiss();
+                    window.dispatchEvent(new CustomEvent("tour:start", { detail: { id: "platform-v1" } }));
+                  }}
+                >
+                  📍 Platform tour (~3 min)
+                </Button>
+                <Button
+                  variant="outline" size="sm" className="text-xs"
+                  onClick={() => {
+                    dismiss();
+                    window.dispatchEvent(new CustomEvent("tour:start", { detail: { id: "setup-v1" } }));
+                  }}
+                >
+                  🚀 Setup walkthrough (~90s)
+                </Button>
+              </div>
+            </div>
           </div>
         )}
 

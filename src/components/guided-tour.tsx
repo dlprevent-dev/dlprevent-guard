@@ -1,34 +1,43 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, ArrowRight, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
- * In-page guided tour driver.
+ * Cross-page guided tour driver.
  *
  * Pass an array of steps with a CSS selector pointing at the element to
- * spotlight + a tooltip body. The driver:
- *   - locks scroll on the page
- *   - dims everything except the spotlighted element (clip-path mask)
+ * spotlight + a tooltip body. Steps can also `navigate` to a different
+ * route — useful for whole-platform tours that walk across pages. The
+ * driver:
+ *   - dims everything except the spotlighted element (SVG clip-path mask)
  *   - positions a tooltip near the target (auto-flips top↔bottom on
  *     viewport overflow)
  *   - re-measures on resize / scroll
  *   - shows Back / Next / Skip controls
+ *   - auto-navigates between pages when a step has `navigate` set, then
+ *     polls (up to 2s) for the next selector to appear before measuring
  *
  * Selectors should be stable — prefer `data-tour="thing"` attributes
  * over class names, which churn.
  *
  * Use cases:
  *   - Per-page tour on first visit (e.g. /dashboard/logs first time)
- *   - "Re-take the tour" command from a Help menu
+ *   - Whole-platform tour that hops between routes
+ *   - Setup-walkthrough tour that points at real UI to teach the flow
  *
  * Storage key: each tour has a unique `id`; visited tours are tracked
  * via `tour-visited:<id>` in localStorage so they don't auto-fire twice.
+ *
+ * Mounting: the driver does NOT lock body scroll (older single-page
+ * version did; we removed it because cross-page tours need normal
+ * scrolling on the destination page after navigation).
  */
 
 export interface TourStep {
-  /** CSS selector for the element to spotlight. */
+  /** CSS selector for the element to spotlight on this step. */
   selector: string;
   /** Short title shown above the body in the tooltip. */
   title: string;
@@ -36,6 +45,20 @@ export interface TourStep {
   body: string;
   /** Optional: preferred tooltip placement; auto-flips on overflow. */
   placement?: "top" | "bottom" | "auto";
+  /**
+   * Optional: navigate to this React Router path BEFORE measuring the
+   * selector. The driver polls for the selector for up to 2s after
+   * navigation so the destination page has time to mount.
+   *
+   * If omitted, the step measures on the current page.
+   */
+  navigate?: string;
+  /**
+   * Optional: override the post-navigation poll timeout in milliseconds.
+   * Default 2000. Bump if a destination page does heavy data fetching
+   * before the target element appears.
+   */
+  navigateTimeoutMs?: number;
 }
 
 export interface GuidedTourProps {
@@ -71,29 +94,66 @@ export function GuidedTour({ id, open, onClose, steps, finishLabel = "Finish tou
   const [targetRect, setTargetRect] = useState<Rect | null>(null);
   const [missing, setMissing] = useState(false);
   const tooltipRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
+  const location = useLocation();
 
   const step = steps[stepIdx];
 
-  // Lookup + measure the target. Re-runs on step change, window resize,
-  // and any scroll (capture phase, so nested-scroll containers fire too).
+  // Lookup + measure the target. Handles three cases:
+  //   1. step.navigate matches current path → measure immediately
+  //   2. step.navigate differs → router-push, then poll for the selector
+  //      (the destination page may need time to mount + fetch data)
+  //   3. step.navigate is undefined → measure on current page (in-page tour)
+  // Re-runs on step change, window resize, any scroll, and route change.
   useEffect(() => {
     if (!open || !step) return;
 
     let raf = 0;
-    const measure = () => {
+    let pollInterval: number | undefined;
+    let pollTimeout: number | undefined;
+
+    const measureNow = () => {
       const el = document.querySelector(step.selector);
       if (!el) {
         setMissing(true);
         setTargetRect(null);
-        return;
+        return false;
       }
       setMissing(false);
       el.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
-      // Re-measure after scroll settles (one rAF is usually enough).
       raf = requestAnimationFrame(() => setTargetRect(rectOf(el)));
+      return true;
     };
 
-    measure();
+    const pollFor = (timeoutMs: number) => {
+      const start = Date.now();
+      setMissing(false);
+      setTargetRect(null);
+      pollInterval = window.setInterval(() => {
+        if (measureNow() || Date.now() - start > timeoutMs) {
+          window.clearInterval(pollInterval);
+          pollInterval = undefined;
+          if (!document.querySelector(step.selector)) setMissing(true);
+        }
+      }, 100);
+      pollTimeout = window.setTimeout(() => {
+        if (pollInterval !== undefined) {
+          window.clearInterval(pollInterval);
+          pollInterval = undefined;
+        }
+      }, timeoutMs + 100);
+    };
+
+    if (step.navigate && step.navigate !== location.pathname) {
+      // Cross-page step — navigate, then poll for the new page's selector.
+      navigate(step.navigate);
+      pollFor(step.navigateTimeoutMs ?? 2000);
+    } else {
+      // Same-page step — measure immediately. If the element isn't there
+      // yet (page still rendering), fall back to a short poll.
+      if (!measureNow()) pollFor(step.navigateTimeoutMs ?? 1000);
+    }
+
     const onWindow = () => setTargetRect((prev) => {
       const el = document.querySelector(step.selector);
       return el ? rectOf(el) : prev;
@@ -102,20 +162,15 @@ export function GuidedTour({ id, open, onClose, steps, finishLabel = "Finish tou
     window.addEventListener("scroll", onWindow, true);
     return () => {
       cancelAnimationFrame(raf);
+      if (pollInterval !== undefined) window.clearInterval(pollInterval);
+      if (pollTimeout !== undefined) window.clearTimeout(pollTimeout);
       window.removeEventListener("resize", onWindow);
       window.removeEventListener("scroll", onWindow, true);
     };
-  }, [open, step]);
+  }, [open, step, location.pathname, navigate]);
 
-  // Lock body scroll while the tour is open.
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = prev; };
-  }, [open]);
-
-  // Esc closes the tour.
+  // Esc closes the tour. (We don't lock body scroll — cross-page tours
+  // need normal scroll on the destination page after navigation.)
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };

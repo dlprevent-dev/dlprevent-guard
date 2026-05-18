@@ -7,6 +7,7 @@ import { MobileSidebar } from "@/components/mobile-sidebar";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { OnboardingWalkthrough } from "@/components/onboarding-walkthrough";
+import { TourLauncher } from "@/components/tour-launcher";
 
 const SIDEBAR_STORAGE_KEY = "dashboard:sidebar:open";
 /** Default expanded state used both on first visit and after a reset. */
@@ -103,6 +104,7 @@ const DashboardLayout = () => {
         <MobileSidebar open={mobileOpen} onOpenChange={setMobileOpen} />
         <CommandPalette />
         <OnboardingWalkthrough />
+        <TourLauncher />
 
         <main className="flex-1 min-w-0 flex flex-col">
           <Topbar onMenuClick={() => setMobileOpen(true)} />

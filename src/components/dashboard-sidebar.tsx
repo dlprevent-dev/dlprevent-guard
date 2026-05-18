@@ -307,6 +307,30 @@ export function DashboardSidebar() {
           >
             Reset sidebar layout
           </button>
+
+          {/* Help / Tours — two launcher buttons that dispatch window
+              events picked up by <TourLauncher> in DashboardLayout. The
+              tour itself walks across pages, so we don't need to handle
+              tour state here. */}
+          <div className="pt-2 border-t border-sidebar-border/50">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground px-1 mb-1">Help</div>
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent("tour:start", { detail: { id: "platform-v1" } }))}
+              className="w-full text-[11px] text-muted-foreground hover:text-foreground transition-colors text-left px-1 py-1"
+              title="Walk through every dashboard surface (~3 min)"
+            >
+              📍 Take the platform tour
+            </button>
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent("tour:start", { detail: { id: "setup-v1" } }))}
+              className="w-full text-[11px] text-muted-foreground hover:text-foreground transition-colors text-left px-1 py-1"
+              title="Hands-on first-setup guide (~90s)"
+            >
+              🚀 Take the setup walkthrough
+            </button>
+          </div>
         </SidebarFooter>
       )}
     </Sidebar>
@@ -335,7 +359,13 @@ function NavItemRow({ item }: { item: NavItem }) {
             "bg-primary/10 text-foreground hover:bg-primary/15 hover:text-foreground ring-1 ring-inset ring-primary/25",
         )}
       >
-        <NavLink to={item.to} end={item.end} className="relative">
+        <NavLink
+          to={item.to} end={item.end} className="relative"
+          // data-tour="nav-<route-slug>" gives guided-tour configs a stable
+          // selector for each sidebar link. The slug is the last path segment
+          // (e.g. /dashboard/threats → "nav-threats", /dashboard → "nav-overview").
+          data-tour={`nav-${item.to === "/dashboard" ? "overview" : item.to.split("/").pop()}`}
+        >
           <span
             aria-hidden
             className={cn(
