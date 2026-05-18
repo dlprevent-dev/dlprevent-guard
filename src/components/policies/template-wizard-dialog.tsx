@@ -57,20 +57,38 @@ const FALLBACK_INTENTS = [
   "off_topic", "tool_abuse", "harassment", "other",
 ];
 
+export type WizardInitialTemplate = {
+  id?: string;
+  builtin_id?: string;
+  name: string;
+  description?: string;
+  highlights?: string[];
+  policy: Record<string, any>;
+  settings: Record<string, any>;
+  rules: Rule[];
+  applies_to_intents?: string[];
+  unknown_intent_fallback?: "apply_no_rules" | "apply_default_rules" | "reject";
+  mode?: "create" | "duplicate" | "edit_custom" | "edit_builtin";
+};
+
 export function TemplateWizardDialog({
   open,
   onOpenChange,
+  initialTemplate,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
+  initialTemplate?: WizardInitialTemplate | null;
 }) {
   const { call } = useDashboardApi();
   const qc = useQueryClient();
+  const seeded = !!initialTemplate;
+  const mode = initialTemplate?.mode ?? "create";
 
   const policiesQ = useQuery<{ policies: any }>({
     queryKey: ["policies"],
     queryFn: () => call("get_policies"),
-    enabled: open,
+    enabled: open && !seeded,
   });
   const settingsQ = useQuery<{ settings: any; known_intents?: string[] }>({
     queryKey: ["policy_settings"],
@@ -80,12 +98,13 @@ export function TemplateWizardDialog({
   const rulesQ = useQuery<{ rules: Rule[] }>({
     queryKey: ["policy_rules"],
     queryFn: () => call("list_policy_rules"),
-    enabled: open,
+    enabled: open && !seeded,
   });
 
   const [step, setStep] = useState<Step>(1);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [highlightsText, setHighlightsText] = useState("");
   const [includeKeywords, setIncludeKeywords] = useState(true);
   const [pickedSettings, setPickedSettings] = useState<Record<string, boolean>>(
     () => Object.fromEntries(SETTING_KEYS.map((s) => [s.key, true])),
@@ -95,32 +114,57 @@ export function TemplateWizardDialog({
   const [customIntent, setCustomIntent] = useState("");
   const [unknownFallback, setUnknownFallback] = useState<"apply_no_rules" | "apply_default_rules" | "reject">("apply_no_rules");
 
+  // Seeded rule pool: rules from initialTemplate get synthetic ids so they can
+  // flow through the same selection state as live rules.
+  const seededRules = useMemo<Rule[]>(() => {
+    if (!initialTemplate?.rules) return [];
+    return initialTemplate.rules.map((r, i) => ({ ...r, id: `seed_${i}` }));
+  }, [initialTemplate]);
+
   // Reset wizard state every time it opens.
   useEffect(() => {
     if (!open) return;
     setStep(1);
-    setName("");
-    setDescription("");
-    setIncludeKeywords(true);
-    setPickedSettings(Object.fromEntries(SETTING_KEYS.map((s) => [s.key, true])));
-    setPickedRuleIds({});
-    setIntentScope([]);
+    if (seeded && initialTemplate) {
+      const dupName = mode === "duplicate" ? `${initialTemplate.name} (copy)` : initialTemplate.name;
+      setName(dupName);
+      setDescription(initialTemplate.description ?? "");
+      setHighlightsText((initialTemplate.highlights ?? []).join("\n"));
+      setIncludeKeywords(Object.keys(initialTemplate.policy ?? {}).length > 0);
+      // Only mark settings that the seeded template actually carries.
+      const seedSettings = initialTemplate.settings ?? {};
+      setPickedSettings(
+        Object.fromEntries(SETTING_KEYS.map((s) => [s.key, seedSettings[s.key] !== undefined])),
+      );
+      setPickedRuleIds(Object.fromEntries(seededRules.map((r) => [r.id!, true])));
+      setIntentScope(initialTemplate.applies_to_intents ?? []);
+      setUnknownFallback(initialTemplate.unknown_intent_fallback ?? "apply_no_rules");
+    } else {
+      setName("");
+      setDescription("");
+      setHighlightsText("");
+      setIncludeKeywords(true);
+      setPickedSettings(Object.fromEntries(SETTING_KEYS.map((s) => [s.key, true])));
+      setPickedRuleIds({});
+      setIntentScope([]);
+      setUnknownFallback("apply_no_rules");
+    }
     setCustomIntent("");
-    setUnknownFallback("apply_no_rules");
-  }, [open]);
+  }, [open, seeded, initialTemplate, mode, seededRules]);
 
-  // Default-select all live rules once they load.
+  // Default-select all live rules once they load (create mode only).
   useEffect(() => {
+    if (seeded) return;
     if (!rulesQ.data?.rules) return;
     setPickedRuleIds((prev) => {
       if (Object.keys(prev).length) return prev;
       return Object.fromEntries(rulesQ.data!.rules.filter((r) => r.id).map((r) => [r.id!, true]));
     });
-  }, [rulesQ.data]);
+  }, [rulesQ.data, seeded]);
 
-  const allRules = rulesQ.data?.rules ?? [];
-  const liveSettings = settingsQ.data?.settings ?? {};
-  const livePolicy = policiesQ.data?.policies ?? {};
+  const allRules: Rule[] = seeded ? seededRules : (rulesQ.data?.rules ?? []);
+  const liveSettings = seeded ? (initialTemplate?.settings ?? {}) : (settingsQ.data?.settings ?? {});
+  const livePolicy = seeded ? (initialTemplate?.policy ?? {}) : (policiesQ.data?.policies ?? {});
 
   const selectedRules = useMemo(
     () => allRules.filter((r) => r.id && pickedRuleIds[r.id]),
@@ -131,8 +175,10 @@ export function TemplateWizardDialog({
     for (const { key } of SETTING_KEYS) {
       if (pickedSettings[key] && liveSettings[key] !== undefined) out[key] = liveSettings[key];
     }
+    const highlights = highlightsText.split("\n").map((l) => l.trim()).filter(Boolean);
+    if (highlights.length) out.__highlights = highlights;
     return out;
-  }, [pickedSettings, liveSettings]);
+  }, [pickedSettings, liveSettings, highlightsText]);
 
   const policySnapshot = useMemo(() => {
     if (!includeKeywords) return {};
@@ -148,6 +194,8 @@ export function TemplateWizardDialog({
     mutationFn: () =>
       call("save_policy_template", {
         body: {
+          id: mode === "edit_custom" ? initialTemplate?.id : undefined,
+          builtin_id: mode === "edit_builtin" ? initialTemplate?.builtin_id : undefined,
           name: name.trim(),
           description: description.trim() || null,
           policy: policySnapshot,
