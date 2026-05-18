@@ -858,10 +858,23 @@ const Connect = () => {
       {step === 2 && created && (
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Plus className="h-4 w-4 text-primary" />
-              Connect more LLMs to this workspace
-            </CardTitle>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <Plus className="h-4 w-4 text-primary" />
+                  Want a unified gateway? Attach more LLMs (optional).
+                </CardTitle>
+                <p className="text-meta text-muted-foreground mt-1.5">
+                  Skip this step for a 1:1 key, or add as many providers as
+                  you want under the same AnveGuard key.
+                </p>
+              </div>
+              {!editKeyId && (
+                <Button variant="ghost" size="sm" onClick={() => setStep(3)}>
+                  Skip — I only need one provider
+                </Button>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="space-y-5">
             <p className="text-meta text-muted-foreground">
