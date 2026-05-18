@@ -66,6 +66,17 @@ const Keys = () => {
   const { call } = useDashboardApi();
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({ queryKey: ["keys"], queryFn: () => call<any>("list_keys") });
+  // Alias counts per key — drives the "+N models" badge that distinguishes
+  // 1:1 keys from N:1 unified-gateway keys at a glance.
+  const { data: aliasData } = useQuery({
+    queryKey: ["aliases", "all"],
+    queryFn: () => call<{ aliases: { api_key_id: string }[] }>("list_aliases"),
+  });
+  const aliasCountByKey = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const a of aliasData?.aliases ?? []) m[a.api_key_id] = (m[a.api_key_id] ?? 0) + 1;
+    return m;
+  }, [aliasData]);
   const { data: provData } = useQuery({
     queryKey: ["providers"],
     queryFn: () => call<{ providers: ProviderDef[]; custom_schema: CustomSchema }>("list_providers"),
@@ -792,6 +803,11 @@ const Keys = () => {
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <Badge status={k.is_active ? "ok" : "neutral"}>{k.is_active ? "active" : "revoked"}</Badge>
                   {k.is_admin && <Badge status="warn" title="Allowed to send custom system_prompt">admin</Badge>}
+                  {(aliasCountByKey[k.id] ?? 0) > 0 && (
+                    <Badge status="info" title={`Unified gateway — ${aliasCountByKey[k.id]} extra model(s) attached`}>
+                      +{aliasCountByKey[k.id]} model{aliasCountByKey[k.id] === 1 ? "" : "s"}
+                    </Badge>
+                  )}
                 </div>
                 <div className="flex items-center gap-1 justify-end">
                   {k.is_active && (

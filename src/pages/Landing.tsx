@@ -81,7 +81,7 @@ const STEPS: { n: string; title: string; body: string; cta: string; to: string }
   {
     n: "02",
     title: "Get one AnveGuard key",
-    body: "One ag_live_… key fronts every provider in the workspace. Your apps pass model=\"gpt-4o\" or model=\"claude-sonnet-4-5\" and AnveGuard routes to the right upstream — all governed by the same policies.",
+    body: "One ag_live_… key fronts your workspace — whether that's a single provider (1:1) or a dozen (N:1). Apps pass model=\"...\" and AnveGuard routes accordingly, all governed by the same policies.",
     cta: "Open Connect wizard",
     to: "/dashboard/connect",
   },

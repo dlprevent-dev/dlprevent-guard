@@ -448,8 +448,11 @@ const Connect = () => {
     }
   };
 
+  // `nextStep` lets Step 1's two CTAs decide where to land after creation:
+  //   2 → "Add more LLMs" (N:1 unified gateway)
+  //   3 → straight to credentials (1:1 simple drop-in)
   const createKey = useMutation({
-    mutationFn: () =>
+    mutationFn: (_opts: { nextStep: 2 | 3 }) =>
       call<{ id: string; full_key: string }>("create_key", {
         body: {
           name: name.trim() || `${tile?.label} workspace`,
@@ -459,11 +462,15 @@ const Connect = () => {
           custom: tile?.provider === "custom" ? customPayload : undefined,
         },
       }),
-    onSuccess: (res) => {
+    onSuccess: (res, vars) => {
       setCreated({ fullKey: res.full_key, id: res.id });
-      setStep(2); // jump to "add more LLMs"
+      setStep(vars.nextStep);
       qc.invalidateQueries({ queryKey: ["keys"] });
-      toast.success("AnveGuard key created — add more LLMs or finish.");
+      toast.success(
+        vars.nextStep === 2
+          ? "AnveGuard key created — attach more LLMs."
+          : "AnveGuard key created — copy your credentials.",
+      );
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -689,6 +696,11 @@ const Connect = () => {
 
       {/* Step 0 — pick primary provider --------------------------------- */}
       {step === 0 && (
+        <>
+        <p className="text-meta text-muted-foreground -mt-2">
+          Pick a primary provider. Next, either finish 1:1 (one provider, one
+          key) or attach more LLMs to the same key for a unified gateway.
+        </p>
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {TILES.map((t) => (
             <button
@@ -716,6 +728,7 @@ const Connect = () => {
             </button>
           ))}
         </div>
+        </>
       )}
 
       {/* Step 1 — paste key + create workspace -------------------------- */}
@@ -817,14 +830,24 @@ const Connect = () => {
               <div className="flex-1" />
               <Button variant="outline" onClick={runTest} disabled={!canTest || testing}>
                 {testing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Test connection
+                Test
               </Button>
               <Button
-                onClick={() => createKey.mutate()}
+                variant="outline"
+                onClick={() => createKey.mutate({ nextStep: 3 })}
                 disabled={!canTest || createKey.isPending}
+                title="Create a 1:1 key bound only to this provider"
               >
                 {createKey.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Create workspace <ArrowRight className="ml-1 h-4 w-4" />
+                Finish — use just {tile.label}
+              </Button>
+              <Button
+                onClick={() => createKey.mutate({ nextStep: 2 })}
+                disabled={!canTest || createKey.isPending}
+                title="Create the key, then attach more LLMs as a unified gateway"
+              >
+                {createKey.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Add more LLMs <ArrowRight className="ml-1 h-4 w-4" />
               </Button>
             </div>
           </CardContent>
@@ -835,10 +858,23 @@ const Connect = () => {
       {step === 2 && created && (
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Plus className="h-4 w-4 text-primary" />
-              Connect more LLMs to this workspace
-            </CardTitle>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <Plus className="h-4 w-4 text-primary" />
+                  Want a unified gateway? Attach more LLMs (optional).
+                </CardTitle>
+                <p className="text-meta text-muted-foreground mt-1.5">
+                  Skip this step for a 1:1 key, or add as many providers as
+                  you want under the same AnveGuard key.
+                </p>
+              </div>
+              {!editKeyId && (
+                <Button variant="ghost" size="sm" onClick={() => setStep(3)}>
+                  Skip — I only need one provider
+                </Button>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="space-y-5">
             <p className="text-meta text-muted-foreground">
