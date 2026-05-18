@@ -689,6 +689,11 @@ const Connect = () => {
 
       {/* Step 0 — pick primary provider --------------------------------- */}
       {step === 0 && (
+        <>
+        <p className="text-meta text-muted-foreground -mt-2">
+          Pick a primary provider. Next, either finish 1:1 (one provider, one
+          key) or attach more LLMs to the same key for a unified gateway.
+        </p>
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {TILES.map((t) => (
             <button
