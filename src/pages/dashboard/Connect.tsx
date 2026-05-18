@@ -9,6 +9,7 @@ import {
   ExternalLink,
   KeyRound,
   Loader2,
+  Pencil,
   Plug,
   Plus,
   ShieldCheck,
@@ -23,6 +24,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useDashboardApi } from "@/lib/api";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -284,6 +287,7 @@ interface KeyRow {
   endpoint_id: string | null;
   model_default: string;
   key_prefix: string;
+  custom_base_url?: string | null;
 }
 
 type Step = 0 | 1 | 2 | 3;
@@ -337,14 +341,52 @@ const Connect = () => {
     if (!editKeyId || !existingKeys) return;
     const k = existingKeys.keys.find((row) => row.id === editKeyId);
     if (!k) return;
-    // We don't have the plaintext for an existing key — that's only shown
-    // once at creation. Edit mode therefore hides the credentials snippet
-    // and rotation lives on the Keys page.
     setCreated({ fullKey: "", id: k.id });
     setName(k.name);
     setModel(k.model_default);
+    // Best-effort: surface the original tile so the "primary provider"
+    // card renders the right label/blurb. Falls back to the Custom tile
+    // for anything we don't recognize.
+    const matched =
+      TILES.find((t) => t.provider === k.provider && (t.id === k.provider || (k.custom_base_url && t.endpointTemplate?.base_url && k.custom_base_url.startsWith(t.endpointTemplate.base_url)))) ||
+      TILES.find((t) => t.provider === k.provider) ||
+      TILES.find((t) => t.id === "custom")!;
+    setTile(matched);
+    if (k.custom_base_url) setCustomBaseUrl(k.custom_base_url);
     setStep(2);
   }, [editKeyId, existingKeys]);
+
+  // ---- Update existing key (edit mode) ----------------------------------
+  const updateKey = useMutation({
+    mutationFn: (patch: Record<string, unknown>) =>
+      call<{ ok: boolean }>("update_key", { body: { id: created?.id, ...patch } }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["keys"] });
+      qc.invalidateQueries({ queryKey: ["endpoints"] });
+      toast.success("Connector updated");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  // Editable fields in edit mode (kept separate from creation state so
+  // unsaved edits don't bleed into the create flow if the user navigates).
+  const [editName, setEditName] = useState("");
+  const [editModel, setEditModel] = useState("");
+  const [changeProviderOpen, setChangeProviderOpen] = useState(false);
+  const [swapTile, setSwapTile] = useState<Tile | null>(null);
+  const [swapKey, setSwapKey] = useState("");
+  const [swapBaseUrl, setSwapBaseUrl] = useState("");
+  const [attachExistingOpen, setAttachExistingOpen] = useState(false);
+  const [attachEndpointId, setAttachEndpointId] = useState("");
+  const [attachAlias, setAttachAlias] = useState("");
+
+  useEffect(() => {
+    if (editKeyId) {
+      setEditName(name);
+      setEditModel(model);
+    }
+  }, [editKeyId, name, model]);
+
 
   // Aliases + endpoints attached to the current AnveGuard key. Refetched
   // after every add/remove so the list is always live.
@@ -588,6 +630,112 @@ const Connect = () => {
     },
     onError: (e: Error) => toast.error(e.message),
   });
+
+  // ---- Edit mode: swap primary provider --------------------------------
+  const aliasedEndpointIds = useMemo(
+    () => new Set((aliasesQuery.data?.aliases ?? []).map((a) => a.target_endpoint_id).filter(Boolean) as string[]),
+    [aliasesQuery.data],
+  );
+  const unattachedEndpoints = useMemo(
+    () => (endpointsQuery.data?.endpoints ?? []).filter((e) => !aliasedEndpointIds.has(e.id)),
+    [endpointsQuery.data, aliasedEndpointIds],
+  );
+
+  const openChangeProvider = () => {
+    setSwapTile(null);
+    setSwapKey("");
+    setSwapBaseUrl("");
+    setChangeProviderOpen(true);
+  };
+
+  const confirmSwap = async () => {
+    if (!swapTile || !created) return;
+    if (swapTile.needsKey && !swapKey.trim()) {
+      toast.error("API key required");
+      return;
+    }
+    if (swapTile.id === "custom" && !swapBaseUrl.trim()) {
+      toast.error("Base URL required");
+      return;
+    }
+    let customPayloadSwap: Record<string, unknown> | undefined;
+    if (swapTile.provider === "custom") {
+      if (swapTile.id === "custom") {
+        customPayloadSwap = {
+          base_url: swapBaseUrl.trim(),
+          kind: "openai_compatible",
+          auth_scheme: swapKey ? "bearer" : "none",
+          auth_header: "Authorization",
+          extra_headers: {},
+          model_suggestions: [],
+        };
+      } else if (swapTile.template) {
+        const tpl = providerData?.custom_schema.templates.find((t) => t.id === swapTile.template);
+        if (tpl) {
+          const v = tpl.values;
+          customPayloadSwap = {
+            base_url: v.base_url,
+            kind: v.kind,
+            auth_scheme: v.auth_scheme,
+            auth_header: v.auth_header || "Authorization",
+            extra_headers: {},
+            path_prefix: v.path_prefix,
+            chat_path: v.chat_path,
+            models_path: v.models_path,
+            response_format: v.response_format,
+            model_suggestions: (v.model_suggestions || "").split(",").map((s) => s.trim()).filter(Boolean),
+          };
+        }
+      }
+    }
+    try {
+      await call("update_key", {
+        body: {
+          id: created.id,
+          provider: swapTile.provider,
+          provider_key: swapTile.needsKey ? swapKey : undefined,
+          custom: customPayloadSwap,
+          model_default: swapTile.defaultModel || undefined,
+        },
+      });
+      toast.success(`Primary provider switched to ${swapTile.label}`);
+      setTile(swapTile);
+      if (swapTile.defaultModel) {
+        setModel(swapTile.defaultModel);
+        setEditModel(swapTile.defaultModel);
+      }
+      setChangeProviderOpen(false);
+      qc.invalidateQueries({ queryKey: ["keys"] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  // ---- Edit mode: attach an already-saved endpoint as an alias --------
+  const submitAttachExisting = async () => {
+    if (!created || !attachEndpointId) return;
+    const ep = endpointById[attachEndpointId];
+    if (!ep) return;
+    const aliasName = (attachAlias.trim() || ep.default_model || ep.name).toLowerCase();
+    try {
+      await call("save_alias", {
+        body: {
+          api_key_id: created.id,
+          alias: aliasName,
+          target_model: attachAlias.trim() || ep.default_model || ep.name,
+          target_endpoint_id: ep.id,
+        },
+      });
+      toast.success(`${ep.name} attached as "${aliasName}"`);
+      setAttachExistingOpen(false);
+      setAttachEndpointId("");
+      setAttachAlias("");
+      qc.invalidateQueries({ queryKey: ["aliases", created.id] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
 
   const copy = (s: string, label: string) => {
     navigator.clipboard.writeText(s);
@@ -877,6 +1025,70 @@ const Connect = () => {
             </div>
           </CardHeader>
           <CardContent className="space-y-5">
+            {/* Edit-mode workspace settings ----------------------------- */}
+            {editKeyId && (
+              <div className="rounded-md border border-border surface-1 p-4 space-y-4">
+                <div className="flex items-center gap-2">
+                  <Pencil className="h-4 w-4 text-primary" />
+                  <span className="font-medium">Workspace settings</span>
+                </div>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-meta">Name</Label>
+                    <Input
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      placeholder="Workspace name"
+                      maxLength={120}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-meta">Default model</Label>
+                    <Input
+                      value={editModel}
+                      onChange={(e) => setEditModel(e.target.value)}
+                      placeholder="model id"
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={openChangeProvider}
+                    title="Repoint this workspace to a different upstream provider"
+                  >
+                    <Plug className="mr-1 h-3.5 w-3.5" />
+                    Change primary provider
+                    {tile && <span className="ml-2 text-muted-foreground font-mono">· {tile.label}</span>}
+                  </Button>
+                  <div className="flex-1" />
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      const patch: Record<string, unknown> = {};
+                      if (editName.trim() && editName !== name) patch.name = editName.trim();
+                      if (editModel.trim() && editModel !== model) patch.model_default = editModel.trim();
+                      if (Object.keys(patch).length === 0) {
+                        toast.info("No changes");
+                        return;
+                      }
+                      updateKey.mutate(patch, {
+                        onSuccess: () => {
+                          if (patch.name) setName(String(patch.name));
+                          if (patch.model_default) setModel(String(patch.model_default));
+                        },
+                      });
+                    }}
+                    disabled={updateKey.isPending}
+                  >
+                    {updateKey.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Save changes
+                  </Button>
+                </div>
+              </div>
+            )}
+
             <p className="text-meta text-muted-foreground">
               Each model you add gets its own name (alias). Your apps just pass{" "}
               <code>model="..."</code> and AnveGuard routes to the right
@@ -889,15 +1101,16 @@ const Connect = () => {
                 Models on this key
               </Label>
               <div className="rounded-md border border-border surface-1 divide-y divide-border">
-                {tile && !editKeyId && (
+                {tile && (
                   <div className="flex items-center justify-between px-3 py-2 text-meta">
                     <div className="flex items-center gap-2 min-w-0">
                       <Badge variant="outline" className="font-mono text-meta">primary</Badge>
-                      <code className="font-mono truncate">{model || tile.defaultModel}</code>
+                      <code className="font-mono truncate">{(editKeyId ? editModel : model) || tile.defaultModel}</code>
                     </div>
                     <span className="text-muted-foreground">{tile.label}</span>
                   </div>
                 )}
+
                 {(aliasesQuery.data?.aliases ?? []).map((a) => {
                   const ep = a.target_endpoint_id ? endpointById[a.target_endpoint_id] : null;
                   return (
@@ -932,9 +1145,26 @@ const Connect = () => {
             {/* Add-provider tile grid (drawer-style: shows form inline below) */}
             {!extraDrawerTile ? (
               <div className="space-y-2">
-                <Label className="text-meta font-mono uppercase tracking-[0.12em] text-muted-foreground">
-                  Add another provider
-                </Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label className="text-meta font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                    Add another provider
+                  </Label>
+                  {unattachedEndpoints.length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setAttachEndpointId(unattachedEndpoints[0].id);
+                        setAttachAlias(unattachedEndpoints[0].default_model ?? "");
+                        setAttachExistingOpen(true);
+                      }}
+                      title="Reuse an endpoint you've already configured"
+                    >
+                      <Plus className="mr-1 h-3.5 w-3.5" />
+                      Attach existing endpoint
+                    </Button>
+                  )}
+                </div>
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
                   {TILES.map((t) => (
                     <button
@@ -1144,6 +1374,132 @@ const Connect = () => {
           <ArrowLeft className="mr-1 h-3.5 w-3.5" /> Back
         </Button>
       )}
+
+      {/* ---- Change-provider dialog (edit mode) -------------------- */}
+      <Dialog open={changeProviderOpen} onOpenChange={setChangeProviderOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Change primary provider</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-md border border-status-warn/40 bg-status-warn/5 px-3 py-2 text-meta text-status-warn">
+              All requests that don't match an alias will route to the new provider. Existing aliases keep their own upstreams.
+            </div>
+            {!swapTile ? (
+              <div className="grid sm:grid-cols-2 gap-2 max-h-[50vh] overflow-y-auto">
+                {TILES.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => {
+                      setSwapTile(t);
+                      setSwapKey("");
+                      setSwapBaseUrl("");
+                    }}
+                    className="text-left rounded-md border border-border surface-1 px-3 py-2 hover:border-primary/60"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-meta">{t.label}</span>
+                      {t.badge && <Badge variant="outline" className="text-meta font-mono">{t.badge}</Badge>}
+                    </div>
+                    <p className="mt-1 text-meta text-muted-foreground line-clamp-1">{t.blurb}</p>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Plug className="h-4 w-4 text-primary" />
+                  <span className="font-medium">{swapTile.label}</span>
+                  <button onClick={() => setSwapTile(null)} className="text-meta text-muted-foreground hover:text-foreground ml-auto">
+                    Change
+                  </button>
+                </div>
+                {swapTile.id === "custom" && (
+                  <div className="space-y-1.5">
+                    <Label className="text-meta">Base URL</Label>
+                    <Input
+                      value={swapBaseUrl}
+                      onChange={(e) => setSwapBaseUrl(e.target.value)}
+                      placeholder="https://your-host.example.com"
+                    />
+                  </div>
+                )}
+                {swapTile.needsKey && (
+                  <div className="space-y-1.5">
+                    <Label className="text-meta">{swapTile.label} API key</Label>
+                    <Input
+                      type="password"
+                      value={swapKey}
+                      onChange={(e) => setSwapKey(e.target.value)}
+                      placeholder={swapTile.keyHint || "Paste your key"}
+                      autoComplete="off"
+                    />
+                    <p className="text-meta text-muted-foreground">
+                      Replaces the current upstream key. Stored AES-GCM encrypted.
+                    </p>
+                  </div>
+                )}
+                {!swapTile.needsKey && (
+                  <div className="rounded-md border border-border surface-2 px-3 py-2 text-meta text-muted-foreground">
+                    No upstream key needed for {swapTile.label}.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setChangeProviderOpen(false)}>Cancel</Button>
+            <Button onClick={confirmSwap} disabled={!swapTile}>
+              Switch provider
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ---- Attach existing endpoint dialog ---------------------- */}
+      <Dialog open={attachExistingOpen} onOpenChange={setAttachExistingOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Attach an existing endpoint</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-meta text-muted-foreground">
+              Reuse an endpoint you've already configured. We'll create an alias on this connector that routes to it.
+            </p>
+            <div className="space-y-1.5">
+              <Label className="text-meta">Endpoint</Label>
+              <Select value={attachEndpointId} onValueChange={(v) => {
+                setAttachEndpointId(v);
+                const ep = endpointById[v];
+                if (ep) setAttachAlias(ep.default_model ?? ep.name);
+              }}>
+                <SelectTrigger><SelectValue placeholder="Pick an endpoint" /></SelectTrigger>
+                <SelectContent>
+                  {unattachedEndpoints.map((e) => (
+                    <SelectItem key={e.id} value={e.id}>
+                      {e.name} · <span className="text-muted-foreground font-mono">{e.kind}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-meta">Alias (model name your apps will call)</Label>
+              <Input
+                value={attachAlias}
+                onChange={(e) => setAttachAlias(e.target.value)}
+                placeholder="model id"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setAttachExistingOpen(false)}>Cancel</Button>
+            <Button onClick={submitAttachExisting} disabled={!attachEndpointId || !attachAlias.trim()}>
+              Attach
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

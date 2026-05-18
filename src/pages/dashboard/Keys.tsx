@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Copy, Plus, Trash2, Check, X, Plug, Beaker, Loader2, KeyRound, Tags, Code2, Play, ShieldAlert, ShieldCheck, AlertTriangle, Sparkles } from "lucide-react";
+import { Copy, Plus, Trash2, Check, X, Plug, Beaker, Loader2, KeyRound, Tags, Code2, Play, ShieldAlert, ShieldCheck, AlertTriangle, Sparkles, Pencil } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useDashboardApi } from "@/lib/api";
 import { toast } from "sonner";
@@ -812,6 +812,13 @@ const Keys = () => {
                 <div className="flex items-center gap-1 justify-end">
                   {k.is_active && (
                     <>
+                      <Button
+                        variant="ghost" size="sm"
+                        onClick={() => navigate(`/dashboard/connect?key=${k.id}`)}
+                        title="Edit connector — rename, change provider, add LLMs"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
                       <Button
                         variant="ghost" size="sm"
                         onClick={() => setIntegrateFor({ id: k.id, name: k.name, key_prefix: k.key_prefix })}
