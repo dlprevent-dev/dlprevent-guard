@@ -567,7 +567,11 @@ export function PolicyTemplatesSection() {
         </CardContent>
       </Card>
 
-      <TemplateWizardDialog open={wizardOpen} onOpenChange={setWizardOpen} />
+      <TemplateWizardDialog
+        open={wizardOpen}
+        onOpenChange={(o) => { setWizardOpen(o); if (!o) setWizardSeed(null); }}
+        initialTemplate={wizardSeed}
+      />
 
       <TemplateTestDialog
         open={!!testTpl}
