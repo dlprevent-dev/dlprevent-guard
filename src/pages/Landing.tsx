@@ -211,10 +211,17 @@ const Landing = () => {
         the snippet section directly below carries that role. */}
     <section className="border-b border-border">
       <div className="mx-auto max-w-3xl px-4 md:px-6 pt-20 pb-14 lg:pt-28 lg:pb-20 text-center">
-        <div className="inline-flex items-center gap-2 rounded-full border border-border surface-2 px-2.5 py-1 text-meta text-muted-foreground font-mono">
-          <span className="h-1.5 w-1.5 rounded-full bg-status-ok" />
-          <span>v1 · Drop-in for the OpenAI API</span>
-        </div>
+        <a
+          href={GITHUB_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-2 rounded-full border border-border surface-2 px-2.5 py-1 text-meta text-muted-foreground font-mono hover:text-foreground hover:border-primary/40 transition-colors"
+          title="View the source on GitHub"
+        >
+          <Github className="h-3 w-3" />
+          <span>Open source · Apache 2.0 · ANVE-AI/prompt-sentinel-flow</span>
+          <ArrowRight className="h-3 w-3" />
+        </a>
         <h1 className="mt-6 text-display lg:text-display-xl font-semibold tracking-tight leading-[1.04]">
           The control layer between<br className="hidden sm:block" /> your app and every AI model.
         </h1>
