@@ -10,6 +10,7 @@ import {
   ScrollText,
   Terminal,
   Plug,
+  Sparkles,
   Server,
   GitBranch,
   FlaskConical,
