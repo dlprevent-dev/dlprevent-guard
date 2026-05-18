@@ -873,6 +873,19 @@ async function handleListModels(req: Request): Promise<Response> {
   }
   const keyRow = auth.keyRow;
 
+  // For providers without a live /v1/models endpoint (e.g. Lovable Gateway),
+  // serve a static catalog built from the provider definition so third-party
+  // SDKs that call `client.models.list()` still get a valid OpenAI envelope.
+  const nowSecStatic = Math.floor(Date.now() / 1000);
+  const providerDef = PROVIDERS.find((p) => p.id === keyRow.provider);
+  if (providerDef && !providerDef.models_url && Array.isArray(providerDef.model_suggestions) && providerDef.model_suggestions.length > 0) {
+    const staticData = providerDef.model_suggestions.map((id) => ({
+      id, object: "model", created: nowSecStatic, owned_by: providerDef.id,
+    }));
+    await sb.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyRow.id);
+    return json({ object: "list", data: staticData }, 200);
+  }
+
   // Resolve upstream credentials the same way /v1/chat/completions does.
   let upstreamKey: string | null = null;
   if (keyRow.provider === "lovable") {
