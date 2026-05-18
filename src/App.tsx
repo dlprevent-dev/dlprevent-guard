@@ -11,6 +11,7 @@ import NotFound from "./pages/NotFound";
 import DashboardLayout from "./pages/dashboard/DashboardLayout";
 import Overview from "./pages/dashboard/Overview";
 import Keys from "./pages/dashboard/Keys";
+import Connect from "./pages/dashboard/Connect";
 import Endpoints from "./pages/dashboard/Endpoints";
 import Providers from "./pages/dashboard/Providers";
 import Routes_ from "./pages/dashboard/Routes";
