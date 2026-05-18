@@ -1,42 +1,49 @@
 ## Goal
 
-Let users edit an existing connector (AnveGuard key) from the Keys page so they can: add more LLMs, attach an already-configured endpoint, rename it, change the default model, or swap the primary provider — without revoking and recreating.
+When you pick an AnveGuard key from the Playground dropdown, you shouldn't have to paste the `ag_live_…` secret again. And the Test action should live right inside the Playground request pane, not only in the page header.
 
-## What exists today
+## Why the paste is required today
 
-- `Connect.tsx` already supports `?key=<id>` and hydrates name + default model into Step 2 ("attach more LLMs"). Backend `save_endpoint` / `save_alias` / `list_aliases` already work.
-- Missing: no Edit button on Keys, no UI to rename / change default model / change primary provider, and no shortcut to attach an existing endpoint (today Step 2 always creates a new endpoint).
+The proxy authenticates by hashing the incoming `Authorization: Bearer ag_live_…` and looking up the key row. Raw secrets are never stored — they're shown once at creation and gone. So "autofetch the key" can't mean "read the secret back from the server". Instead we let the dashboard itself send on behalf of the user, using their Clerk session.
+
+## Approach
+
+Add a **dashboard-authenticated bypass path** to the proxy: when the caller is a signed-in dashboard user (Clerk JWT, not `ag_live_…`), the proxy accepts an `x-anveguard-key-id` header and resolves the key server-side after verifying the key belongs to that user's workspace. All policy / logging / rate-limit behavior stays identical — it's just an alternate authentication on the proxy edge.
+
+Frontend then stops asking for the secret whenever a key is selected from the dropdown.
 
 ## Changes
 
-### 1. `src/pages/dashboard/Keys.tsx` — Edit entry point
-Add a pencil button on each active key row (next to Code / Tags / Beaker) that navigates to `/dashboard/connect?key=<id>`. Tooltip: "Edit connector — add LLMs, change provider, rename".
+### Backend — `supabase/functions/proxy/index.ts`
+- Branch at the top of the request:
+  - If `Authorization: Bearer ag_live_…` → existing path, unchanged.
+  - Else if `Authorization: Bearer <Clerk JWT>` **and** header `x-anveguard-key-id` is present → verify Clerk JWT, load the api_key row, assert `api_key.user_id === claims.sub` (or workspace membership for shared endpoints), then continue with that key as if it had been resolved from a secret.
+  - Else → existing 401.
+- Tag logs from this path with `source: "playground"` (new column already supported, or stash in `metadata`) so production traffic and dashboard tests are distinguishable in Logs.
+- Reject this bypass for any key whose `is_active = false` or whose endpoint is shared-but-not-owned-by caller.
 
-### 2. `src/pages/dashboard/Connect.tsx` — Edit mode upgrade
-Rebrand Step 2 header in edit mode to "Edit connector — {name}" and split it into three tabs/sections:
+### Frontend — `src/pages/dashboard/Playground.tsx`
+- Drop the manual `ag_live_…` input whenever `selection.kind === "key"`. Keep it only as a fallback when the user wants to test a key from another browser (collapsible "Use a pasted key instead" link).
+- `send()` becomes: if a key is selected, send with Clerk token + `x-anveguard-key-id: <selectedKey.id>`; otherwise fall back to the pasted secret.
+- Add an inline **"Test connection"** button inside the request pane, directly under the key picker (in addition to the existing header button). One click sends the canned `Reply with the single word: pong.` non-streamed and shows pass/fail next to the picker — no need to touch the prompt area.
+- Update the HelpPanel copy: step 2 ("Paste the key secret") is replaced with "Pick a key — the dashboard authenticates for you. Paste a key only if it was created in another browser."
 
-**a. Workspace settings**
-- Editable `name` and `model_default` inputs.
-- "Save" calls a new `update_key` API (name + model_default) — falls back to existing edge mutation pattern if one is present; otherwise add a small `update_key` handler call.
+### Tests
+- New Deno test in `supabase/functions/proxy/`: dashboard-JWT + `x-anveguard-key-id` path returns 200 for owner, 403 for cross-user, 401 for missing header.
+- Update `e2e/07-full-journey.spec.ts` step 3/4: the Playground steps no longer fill the `ag_live_…` field once a key is selected; assert the new inline Test button works.
+- Leave the existing pasted-key tests in place (covers the fallback).
 
-**b. Primary provider**
-- Show current provider as a card with a "Change provider" button.
-- Clicking opens the Step 0 tile grid in a dialog; selecting a tile + entering a new key calls `update_key` with `{ provider, provider_key, endpoint_id? }` to repoint the workspace's upstream. Confirms with a "This will route all unaliased model calls to the new provider" warning.
+## Out of scope
 
-**c. Attached LLMs** (existing Step 2 list, enhanced)
-- Keep the "Add another LLM" drawer.
-- Add a second CTA "Attach existing endpoint" that lists `endpointsQuery.data.endpoints` not yet aliased and lets the user pick one + give it an alias — calls `save_alias` only (no new endpoint, no new key paste).
-- Each alias row gets an inline "Edit alias" affordance (rename alias / change target model/endpoint) + existing remove button.
-
-### 3. Hydration fix
-`useEffect` for `editKeyId` already sets `created = { fullKey: "", id }`. Extend it to also fetch the key's current `provider` and `endpoint_id` so the "Primary provider" card can render the right tile label.
-
-### 4. Out of scope
-- No new tables, no schema changes.
-- Plaintext `ag_live_…` is never re-shown in edit mode (rotation stays a separate action on Keys page).
-- No changes to landing page or pricing.
+- No change to production proxy clients — they still send `ag_live_…` and nothing about that path changes.
+- No persistent client-side caching of secrets.
+- No new tables or migrations.
 
 ## Files touched
-- `src/pages/dashboard/Keys.tsx` (add Edit button)
-- `src/pages/dashboard/Connect.tsx` (edit-mode UI: rename, change provider dialog, attach-existing-endpoint flow)
-- Possibly one new backend handler `update_key` if not already present — will verify before adding; otherwise reuse existing.
+
+```text
+supabase/functions/proxy/index.ts          (auth branch + tests)
+supabase/functions/proxy/*_test.ts         (new cases)
+src/pages/dashboard/Playground.tsx         (UI + send logic + inline Test)
+e2e/07-full-journey.spec.ts                (drop paste step, add Test assertion)
+```
