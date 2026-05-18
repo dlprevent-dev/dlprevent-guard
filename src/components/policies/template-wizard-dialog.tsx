@@ -252,7 +252,7 @@ export function TemplateWizardDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-primary" />
-            New policy template · <span className="text-muted-foreground font-normal">{stepTitles[step]}</span>
+            {titlePrefix} · <span className="text-muted-foreground font-normal">{stepTitles[step]}</span>
           </DialogTitle>
         </DialogHeader>
 
