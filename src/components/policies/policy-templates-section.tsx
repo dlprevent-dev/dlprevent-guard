@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Beaker, Bot, Building2, Check, History, Plus, ShieldCheck, Sparkles, Trash2, User } from "lucide-react";
+import { Beaker, Bot, Building2, Check, Copy, History, Pencil, Plus, RotateCcw, ShieldCheck, Sparkles, Trash2, User } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useDashboardApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { TemplateWizardDialog } from "./template-wizard-dialog";
+import { TemplateWizardDialog, type WizardInitialTemplate } from "./template-wizard-dialog";
 import { TemplateTestDialog } from "./template-test-dialog";
 import { TemplateHistoryDialog } from "./template-history-dialog";
 import { TemplateApplyPreviewDialog } from "./template-apply-preview-dialog";
@@ -244,14 +244,24 @@ export function PolicyTemplatesSection() {
   const [pending, setPending] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Template | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardSeed, setWizardSeed] = useState<WizardInitialTemplate | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [testTpl, setTestTpl] = useState<Template | null>(null);
   const [historyTpl, setHistoryTpl] = useState<Template | null>(null);
+  const [resetTarget, setResetTarget] = useState<{ id: string; name: string } | null>(null);
 
   const customQ = useQuery<{ templates: any[] }>({
     queryKey: ["policy_templates"],
     queryFn: () => call("list_policy_templates"),
   });
+
+  const allRows = customQ.data?.templates ?? [];
+  // Per-builtin override: a saved template row tagged with a builtin_id.
+  const overrideByBuiltin = useMemo(() => {
+    const m: Record<string, any> = {};
+    for (const r of allRows) if (r.builtin_id) m[r.builtin_id] = r;
+    return m;
+  }, [allRows]);
 
   const apply = useMutation({
     mutationFn: async (tpl: Template) => {
@@ -260,7 +270,11 @@ export function PolicyTemplatesSection() {
         await call("save_policies", { body: tpl.policy });
       }
       if (tpl.settings && Object.keys(tpl.settings).length) {
-        await call("save_policy_settings", { body: tpl.settings });
+        // Strip wizard-only fields (e.g. card highlights) before saving live settings.
+        const { __highlights: _h, ...liveSettings } = tpl.settings as Record<string, unknown>;
+        if (Object.keys(liveSettings).length) {
+          await call("save_policy_settings", { body: liveSettings });
+        }
       }
       if (tpl.rules?.length) {
         for (const rule of tpl.rules) {
@@ -287,38 +301,100 @@ export function PolicyTemplatesSection() {
       toast.success("Template deleted");
       qc.invalidateQueries({ queryKey: ["policy_templates"] });
       setDeleteId(null);
+      setResetTarget(null);
     },
     onError: (e: any) => toast.error(e?.message ?? "Failed to delete template"),
   });
 
-  const customTemplates: Template[] = (customQ.data?.templates ?? []).map((t: any) => ({
-    id: t.id,
-    name: t.name,
-    tagline: t.description || "Custom template",
-    icon: <User className="h-4 w-4" />,
-    accent: "text-foreground",
-    highlights: [
-      `${Array.isArray(t.rules) ? t.rules.length : 0} rule${(Array.isArray(t.rules) ? t.rules.length : 0) === 1 ? "" : "s"}`,
-      `${Object.keys(t.settings ?? {}).length} setting${Object.keys(t.settings ?? {}).length === 1 ? "" : "s"}`,
-      ((t.policy?.blocked_keywords?.length ?? 0) + (t.policy?.allowed_keywords?.length ?? 0))
-        ? `${(t.policy?.blocked_keywords?.length ?? 0) + (t.policy?.allowed_keywords?.length ?? 0)} keywords`
-        : "No keyword snapshot",
-      Array.isArray(t.applies_to_intents) && t.applies_to_intents.length
-        ? `Intents: ${t.applies_to_intents.slice(0, 3).join(", ")}${t.applies_to_intents.length > 3 ? "…" : ""}`
-        : "All intents",
-      `Unknown intent → ${
-        t.unknown_intent_fallback === "reject" ? "reject"
-        : t.unknown_intent_fallback === "apply_default_rules" ? "apply rules"
-        : "skip rules"
-      }`,
-    ],
-    policy: t.policy ?? {},
-    settings: t.settings ?? {},
-    rules: Array.isArray(t.rules) ? t.rules : [],
-    applies_to_intents: Array.isArray(t.applies_to_intents) ? t.applies_to_intents : [],
-    unknown_intent_fallback: t.unknown_intent_fallback ?? "apply_no_rules",
-    custom: true,
-  } as Template & { custom?: boolean }));
+  // Built-in templates merged with their overrides (if any).
+  const builtinTemplates: (Template & { overridden?: boolean; builtinId: string })[] = TEMPLATES.map((tpl) => {
+    const ov = overrideByBuiltin[tpl.id as string];
+    if (!ov) return { ...tpl, builtinId: tpl.id as string };
+    const highlights = Array.isArray(ov.settings?.__highlights) && ov.settings.__highlights.length
+      ? ov.settings.__highlights
+      : tpl.highlights;
+    return {
+      ...tpl,
+      builtinId: tpl.id as string,
+      name: ov.name || tpl.name,
+      tagline: ov.description || tpl.tagline,
+      highlights,
+      policy: ov.policy ?? tpl.policy,
+      settings: ov.settings ?? tpl.settings,
+      rules: Array.isArray(ov.rules) ? ov.rules : tpl.rules,
+      applies_to_intents: ov.applies_to_intents ?? tpl.applies_to_intents,
+      unknown_intent_fallback: ov.unknown_intent_fallback ?? tpl.unknown_intent_fallback,
+      overridden: true,
+    };
+  });
+
+  const customTemplates: Template[] = allRows
+    .filter((t: any) => !t.builtin_id)
+    .map((t: any) => ({
+      id: t.id,
+      name: t.name,
+      tagline: t.description || "Custom template",
+      icon: <User className="h-4 w-4" />,
+      accent: "text-foreground",
+      highlights: Array.isArray(t.settings?.__highlights) && t.settings.__highlights.length
+        ? t.settings.__highlights
+        : [
+            `${Array.isArray(t.rules) ? t.rules.length : 0} rule${(Array.isArray(t.rules) ? t.rules.length : 0) === 1 ? "" : "s"}`,
+            `${Object.keys(t.settings ?? {}).filter((k) => k !== "__highlights").length} setting${Object.keys(t.settings ?? {}).filter((k) => k !== "__highlights").length === 1 ? "" : "s"}`,
+            ((t.policy?.blocked_keywords?.length ?? 0) + (t.policy?.allowed_keywords?.length ?? 0))
+              ? `${(t.policy?.blocked_keywords?.length ?? 0) + (t.policy?.allowed_keywords?.length ?? 0)} keywords`
+              : "No keyword snapshot",
+          ],
+      policy: t.policy ?? {},
+      settings: t.settings ?? {},
+      rules: Array.isArray(t.rules) ? t.rules : [],
+      applies_to_intents: Array.isArray(t.applies_to_intents) ? t.applies_to_intents : [],
+      unknown_intent_fallback: t.unknown_intent_fallback ?? "apply_no_rules",
+      custom: true,
+    } as Template & { custom?: boolean }));
+
+  const openWizard = (seed: WizardInitialTemplate | null) => {
+    setWizardSeed(seed);
+    setWizardOpen(true);
+  };
+
+  const editBuiltin = (tpl: Template & { builtinId: string }) => openWizard({
+    builtin_id: tpl.builtinId,
+    name: tpl.name,
+    description: tpl.tagline,
+    highlights: tpl.highlights,
+    policy: tpl.policy as Record<string, any>,
+    settings: tpl.settings as Record<string, any>,
+    rules: (tpl.rules ?? []) as any,
+    applies_to_intents: tpl.applies_to_intents ?? [],
+    unknown_intent_fallback: tpl.unknown_intent_fallback,
+    mode: "edit_builtin",
+  });
+
+  const duplicateBuiltin = (tpl: Template) => openWizard({
+    name: tpl.name,
+    description: tpl.tagline,
+    highlights: tpl.highlights,
+    policy: tpl.policy as Record<string, any>,
+    settings: tpl.settings as Record<string, any>,
+    rules: (tpl.rules ?? []) as any,
+    applies_to_intents: tpl.applies_to_intents ?? [],
+    unknown_intent_fallback: tpl.unknown_intent_fallback,
+    mode: "duplicate",
+  });
+
+  const editCustom = (tpl: Template) => openWizard({
+    id: tpl.id,
+    name: tpl.name,
+    description: tpl.tagline === "Custom template" ? "" : tpl.tagline,
+    highlights: tpl.highlights,
+    policy: tpl.policy as Record<string, any>,
+    settings: tpl.settings as Record<string, any>,
+    rules: (tpl.rules ?? []) as any,
+    applies_to_intents: tpl.applies_to_intents ?? [],
+    unknown_intent_fallback: tpl.unknown_intent_fallback,
+    mode: "edit_custom",
+  });
 
   return (
     <>
@@ -338,24 +414,30 @@ export function PolicyTemplatesSection() {
                 own from the rules and settings you've already configured.
               </p>
             </div>
-            <Button size="sm" onClick={() => setWizardOpen(true)}>
+            <Button size="sm" onClick={() => openWizard(null)}>
               <Plus className="h-3.5 w-3.5 mr-1" /> New template
             </Button>
           </div>
 
           <div className="grid md:grid-cols-3 gap-3">
-            {TEMPLATES.map((tpl) => {
+            {builtinTemplates.map((tpl) => {
               const isPending = pending === tpl.id;
+              const overrideRow = overrideByBuiltin[tpl.builtinId];
               return (
                 <div
                   key={tpl.id}
                   className="rounded-lg border border-border surface-2 p-4 flex flex-col gap-3"
                 >
-                  <div className="flex items-center gap-2">
-                    <span className={cn("inline-flex items-center justify-center h-7 w-7 rounded-md border border-border surface-1", tpl.accent)}>
-                      {tpl.icon}
-                    </span>
-                    <div className="font-medium text-body">{tpl.name}</div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={cn("inline-flex items-center justify-center h-7 w-7 rounded-md border border-border surface-1", tpl.accent)}>
+                        {tpl.icon}
+                      </span>
+                      <div className="font-medium text-body truncate">{tpl.name}</div>
+                    </div>
+                    {tpl.overridden && (
+                      <Badge variant="outline" className="text-[10px] shrink-0">Edited</Badge>
+                    )}
                   </div>
                   <p className="text-meta text-muted-foreground">{tpl.tagline}</p>
                   <ul className="space-y-1.5 text-meta">
@@ -371,22 +453,33 @@ export function PolicyTemplatesSection() {
                       +{tpl.rules.length} rule{tpl.rules.length === 1 ? "" : "s"}
                     </Badge>
                   ) : null}
-                  <div className="mt-auto pt-1 flex gap-2">
+                  <div className="mt-auto pt-1 flex gap-2 flex-wrap">
                     <Button
                       size="sm"
-                      className="flex-1"
+                      className="flex-1 min-w-[120px]"
                       disabled={isPending || apply.isPending}
                       onClick={() => setConfirm(tpl)}
                     >
-                      {isPending ? "Applying…" : "Apply template"}
+                      {isPending ? "Applying…" : "Apply"}
                     </Button>
-                    <Button
-                      size="sm" variant="outline"
-                      onClick={() => setTestTpl(tpl)}
-                      title="Test prompts"
-                    >
+                    <Button size="sm" variant="outline" onClick={() => editBuiltin(tpl)} title="Edit this template">
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => duplicateBuiltin(tpl)} title="Duplicate as new template">
+                      <Copy className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setTestTpl(tpl)} title="Test prompts">
                       <Beaker className="h-3.5 w-3.5" />
                     </Button>
+                    {tpl.overridden && overrideRow && (
+                      <Button
+                        size="sm" variant="outline"
+                        onClick={() => setResetTarget({ id: overrideRow.id, name: tpl.name })}
+                        title="Reset to default"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
                   </div>
                 </div>
               );
@@ -416,6 +509,13 @@ export function PolicyTemplatesSection() {
                           <div className="font-medium text-body truncate">{tpl.name}</div>
                         </div>
                         <div className="flex items-center gap-1">
+                          <Button
+                            size="icon" variant="ghost" className="h-7 w-7"
+                            onClick={() => editCustom(tpl)}
+                            title="Edit template"
+                          >
+                            <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                          </Button>
                           <Button
                             size="icon" variant="ghost" className="h-7 w-7"
                             onClick={() => setHistoryTpl(tpl)}
@@ -467,7 +567,11 @@ export function PolicyTemplatesSection() {
         </CardContent>
       </Card>
 
-      <TemplateWizardDialog open={wizardOpen} onOpenChange={setWizardOpen} />
+      <TemplateWizardDialog
+        open={wizardOpen}
+        onOpenChange={(o) => { setWizardOpen(o); if (!o) setWizardSeed(null); }}
+        initialTemplate={wizardSeed}
+      />
 
       <TemplateTestDialog
         open={!!testTpl}
@@ -487,6 +591,27 @@ export function PolicyTemplatesSection() {
         templateId={historyTpl?.id ?? null}
         templateName={historyTpl?.name ?? ""}
       />
+
+      <AlertDialog open={!!resetTarget} onOpenChange={(o) => !o && setResetTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset "{resetTarget?.name}" to default?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your customizations to this built-in template will be discarded. The original
+              built-in version will be restored. Your live policy is not affected.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={remove.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={remove.isPending}
+              onClick={(e) => { e.preventDefault(); if (resetTarget) remove.mutate(resetTarget.id); }}
+            >
+              {remove.isPending ? "Resetting…" : "Reset to default"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={!!deleteId} onOpenChange={(o) => !o && setDeleteId(null)}>
         <AlertDialogContent>

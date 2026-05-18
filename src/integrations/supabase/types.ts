@@ -715,6 +715,7 @@ export type Database = {
       policy_templates: {
         Row: {
           applies_to_intents: string[]
+          builtin_id: string | null
           created_at: string
           current_version: number
           description: string | null
@@ -729,6 +730,7 @@ export type Database = {
         }
         Insert: {
           applies_to_intents?: string[]
+          builtin_id?: string | null
           created_at?: string
           current_version?: number
           description?: string | null
@@ -743,6 +745,7 @@ export type Database = {
         }
         Update: {
           applies_to_intents?: string[]
+          builtin_id?: string | null
           created_at?: string
           current_version?: number
           description?: string | null
