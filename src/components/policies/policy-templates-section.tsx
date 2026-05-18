@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useDashboardApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { TemplateWizardDialog } from "./template-wizard-dialog";
+import { TemplateWizardDialog, type WizardInitialTemplate } from "./template-wizard-dialog";
 import { TemplateTestDialog } from "./template-test-dialog";
 import { TemplateHistoryDialog } from "./template-history-dialog";
 import { TemplateApplyPreviewDialog } from "./template-apply-preview-dialog";
