@@ -721,6 +721,7 @@ const Connect = () => {
             </button>
           ))}
         </div>
+        </>
       )}
 
       {/* Step 1 — paste key + create workspace -------------------------- */}
