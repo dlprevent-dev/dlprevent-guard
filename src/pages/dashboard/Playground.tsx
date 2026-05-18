@@ -369,8 +369,8 @@ const Playground = () => {
             body: "Use the dropdown below. Configured endpoints with no key bound show up too — you'll be prompted to create one in a single click.",
           },
           {
-            title: "Paste the key secret",
-            body: <>Paste the <code className="font-mono text-xs">ag_live_…</code> value in the AnveGuard API key field. You only see it once at creation, so keep it handy.</>,
+            title: "No secret to paste",
+            body: <>Signed-in dashboard users don't need the <code className="font-mono text-xs">ag_live_…</code> value — the Playground signs requests with your dashboard session. Use the "Use a pasted key instead" toggle only if you want to test as an external app.</>,
           },
           {
             title: "Send or run a quick test",
