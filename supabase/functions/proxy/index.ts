@@ -875,23 +875,15 @@ async function handleListModels(req: Request): Promise<Response> {
   const sb = service();
   const reqUrl = new URL(req.url);
 
-  const authHeader = req.headers.get("Authorization") || req.headers.get("authorization") || "";
-  const xApiKey = req.headers.get("x-api-key") || req.headers.get("X-API-Key") || "";
-  const queryKey = reqUrl.searchParams.get("key") || "";
-  const bearer = authHeader.match(/^Bearer\s+(ag_live_\S+)/i)?.[1];
-  const apiKeyPlain = bearer
-    || (xApiKey.startsWith("ag_live_") ? xApiKey : "")
-    || (queryKey.startsWith("ag_live_") ? queryKey : "");
-  if (!apiKeyPlain) {
-    return errorResponse("openai", 401, "Missing API key.", { code: "missing_api_key" });
+  const authResult = await resolveProxyKeyAuth(
+    sb,
+    req,
+    "id,user_id,provider,provider_key_encrypted,is_active,custom_base_url,custom_models_url,custom_kind,custom_auth_scheme,custom_auth_header,custom_extra_headers,custom_path_prefix,custom_chat_path,custom_models_path,custom_response_format",
+  );
+  if (!authResult.ok) {
+    return errorResponse("openai", authResult.code === "missing_api_key" ? 401 : 401, authResult.message, { code: authResult.code });
   }
-  const key_hash = await sha256Hex(apiKeyPlain);
-  const { data: keyRow } = await sb.from("api_keys")
-    .select("id,user_id,provider,provider_key_encrypted,is_active,custom_base_url,custom_models_url,custom_kind,custom_auth_scheme,custom_auth_header,custom_extra_headers,custom_path_prefix,custom_chat_path,custom_models_path,custom_response_format")
-    .eq("key_hash", key_hash).maybeSingle();
-  if (!keyRow || !keyRow.is_active) {
-    return errorResponse("openai", 401, "Invalid or revoked API key.", { code: "invalid_api_key" });
-  }
+  const keyRow = authResult.keyRow;
 
   // Resolve upstream credentials the same way /v1/chat/completions does.
   let upstreamKey: string | null = null;
