@@ -1,4 +1,5 @@
 import { DocPage, H2, P, Lead, UL, Pre, Table, Callout } from "./DocsLayout";
+import { RequestShot } from "@/components/docs/RequestShot";
 
 const ProxyApi = () => (
   <DocPage
