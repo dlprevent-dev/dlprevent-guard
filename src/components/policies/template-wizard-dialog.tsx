@@ -392,7 +392,7 @@ export function TemplateWizardDialog({
           ) : (
             <Button disabled={save.isPending || !name.trim()} onClick={() => save.mutate()}>
               <Save className="h-3.5 w-3.5 mr-1" />
-              {save.isPending ? "Saving…" : "Save template"}
+              {save.isPending ? "Saving…" : saveLabel}
             </Button>
           )}
         </DialogFooter>
