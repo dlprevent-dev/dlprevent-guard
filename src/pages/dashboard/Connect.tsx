@@ -1374,6 +1374,132 @@ const Connect = () => {
           <ArrowLeft className="mr-1 h-3.5 w-3.5" /> Back
         </Button>
       )}
+
+      {/* ---- Change-provider dialog (edit mode) -------------------- */}
+      <Dialog open={changeProviderOpen} onOpenChange={setChangeProviderOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Change primary provider</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-md border border-status-warn/40 bg-status-warn/5 px-3 py-2 text-meta text-status-warn">
+              All requests that don't match an alias will route to the new provider. Existing aliases keep their own upstreams.
+            </div>
+            {!swapTile ? (
+              <div className="grid sm:grid-cols-2 gap-2 max-h-[50vh] overflow-y-auto">
+                {TILES.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => {
+                      setSwapTile(t);
+                      setSwapKey("");
+                      setSwapBaseUrl("");
+                    }}
+                    className="text-left rounded-md border border-border surface-1 px-3 py-2 hover:border-primary/60"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-meta">{t.label}</span>
+                      {t.badge && <Badge variant="outline" className="text-meta font-mono">{t.badge}</Badge>}
+                    </div>
+                    <p className="mt-1 text-meta text-muted-foreground line-clamp-1">{t.blurb}</p>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Plug className="h-4 w-4 text-primary" />
+                  <span className="font-medium">{swapTile.label}</span>
+                  <button onClick={() => setSwapTile(null)} className="text-meta text-muted-foreground hover:text-foreground ml-auto">
+                    Change
+                  </button>
+                </div>
+                {swapTile.id === "custom" && (
+                  <div className="space-y-1.5">
+                    <Label className="text-meta">Base URL</Label>
+                    <Input
+                      value={swapBaseUrl}
+                      onChange={(e) => setSwapBaseUrl(e.target.value)}
+                      placeholder="https://your-host.example.com"
+                    />
+                  </div>
+                )}
+                {swapTile.needsKey && (
+                  <div className="space-y-1.5">
+                    <Label className="text-meta">{swapTile.label} API key</Label>
+                    <Input
+                      type="password"
+                      value={swapKey}
+                      onChange={(e) => setSwapKey(e.target.value)}
+                      placeholder={swapTile.keyHint || "Paste your key"}
+                      autoComplete="off"
+                    />
+                    <p className="text-meta text-muted-foreground">
+                      Replaces the current upstream key. Stored AES-GCM encrypted.
+                    </p>
+                  </div>
+                )}
+                {!swapTile.needsKey && (
+                  <div className="rounded-md border border-border surface-2 px-3 py-2 text-meta text-muted-foreground">
+                    No upstream key needed for {swapTile.label}.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setChangeProviderOpen(false)}>Cancel</Button>
+            <Button onClick={confirmSwap} disabled={!swapTile}>
+              Switch provider
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ---- Attach existing endpoint dialog ---------------------- */}
+      <Dialog open={attachExistingOpen} onOpenChange={setAttachExistingOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Attach an existing endpoint</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-meta text-muted-foreground">
+              Reuse an endpoint you've already configured. We'll create an alias on this connector that routes to it.
+            </p>
+            <div className="space-y-1.5">
+              <Label className="text-meta">Endpoint</Label>
+              <Select value={attachEndpointId} onValueChange={(v) => {
+                setAttachEndpointId(v);
+                const ep = endpointById[v];
+                if (ep) setAttachAlias(ep.default_model ?? ep.name);
+              }}>
+                <SelectTrigger><SelectValue placeholder="Pick an endpoint" /></SelectTrigger>
+                <SelectContent>
+                  {unattachedEndpoints.map((e) => (
+                    <SelectItem key={e.id} value={e.id}>
+                      {e.name} · <span className="text-muted-foreground font-mono">{e.kind}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-meta">Alias (model name your apps will call)</Label>
+              <Input
+                value={attachAlias}
+                onChange={(e) => setAttachAlias(e.target.value)}
+                placeholder="model id"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setAttachExistingOpen(false)}>Cancel</Button>
+            <Button onClick={submitAttachExisting} disabled={!attachEndpointId || !attachAlias.trim()}>
+              Attach
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
