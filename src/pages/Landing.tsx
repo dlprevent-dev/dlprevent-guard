@@ -31,9 +31,12 @@ import { toast } from "sonner";
  *   9. Footer                – brand, status, links
  */
 
+const GITHUB_URL = "https://github.com/ANVE-AI/prompt-sentinel-flow";
+
 const NAV = [
   { href: "#product", label: "Product" },
   { href: "#observability", label: "Observability" },
+  { href: "#opensource", label: "Open source" },
   { href: "#how", label: "Quickstart" },
   { href: "#faq", label: "FAQ" },
   { href: "/docs", label: "Docs" },
