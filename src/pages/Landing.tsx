@@ -183,9 +183,15 @@ const Landing = () => {
         </nav>
         <div className="flex items-center gap-1.5">
           <Button variant="ghost" size="sm" asChild className="text-muted-foreground hover:text-foreground">
+            <a href={GITHUB_URL} target="_blank" rel="noreferrer" title="AnveGuard on GitHub — Apache 2.0">
+              <Github className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">GitHub</span>
+            </a>
+          </Button>
+          <Button variant="ghost" size="sm" asChild className="text-muted-foreground hover:text-foreground">
             <Link to="/docs" title="Open the AnveGuard documentation">
               <HelpCircle className="h-3.5 w-3.5" />
-              Help
+              <span className="hidden sm:inline">Help</span>
             </Link>
           </Button>
           <Button variant="ghost" size="sm" asChild>
