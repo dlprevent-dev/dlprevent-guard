@@ -1998,7 +1998,7 @@ Deno.serve(async (req) => {
       // applying it later is a pure write — no ID linkage to the live rows.
       case "list_policy_templates": {
         const { data } = await sb.from("policy_templates")
-          .select("id,name,description,policy,settings,rules,applies_to_intents,unknown_intent_fallback,created_at,updated_at")
+          .select("id,builtin_id,name,description,policy,settings,rules,applies_to_intents,unknown_intent_fallback,created_at,updated_at")
           .eq("user_id", userId).order("created_at", { ascending: false });
         return json({ templates: data ?? [] });
       }
