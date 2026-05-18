@@ -511,6 +511,13 @@ export function PolicyTemplatesSection() {
                         <div className="flex items-center gap-1">
                           <Button
                             size="icon" variant="ghost" className="h-7 w-7"
+                            onClick={() => editCustom(tpl)}
+                            title="Edit template"
+                          >
+                            <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                          </Button>
+                          <Button
+                            size="icon" variant="ghost" className="h-7 w-7"
                             onClick={() => setHistoryTpl(tpl)}
                             title="Version history"
                           >
