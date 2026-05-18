@@ -414,24 +414,30 @@ export function PolicyTemplatesSection() {
                 own from the rules and settings you've already configured.
               </p>
             </div>
-            <Button size="sm" onClick={() => setWizardOpen(true)}>
+            <Button size="sm" onClick={() => openWizard(null)}>
               <Plus className="h-3.5 w-3.5 mr-1" /> New template
             </Button>
           </div>
 
           <div className="grid md:grid-cols-3 gap-3">
-            {TEMPLATES.map((tpl) => {
+            {builtinTemplates.map((tpl) => {
               const isPending = pending === tpl.id;
+              const overrideRow = overrideByBuiltin[tpl.builtinId];
               return (
                 <div
                   key={tpl.id}
                   className="rounded-lg border border-border surface-2 p-4 flex flex-col gap-3"
                 >
-                  <div className="flex items-center gap-2">
-                    <span className={cn("inline-flex items-center justify-center h-7 w-7 rounded-md border border-border surface-1", tpl.accent)}>
-                      {tpl.icon}
-                    </span>
-                    <div className="font-medium text-body">{tpl.name}</div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={cn("inline-flex items-center justify-center h-7 w-7 rounded-md border border-border surface-1", tpl.accent)}>
+                        {tpl.icon}
+                      </span>
+                      <div className="font-medium text-body truncate">{tpl.name}</div>
+                    </div>
+                    {tpl.overridden && (
+                      <Badge variant="outline" className="text-[10px] shrink-0">Edited</Badge>
+                    )}
                   </div>
                   <p className="text-meta text-muted-foreground">{tpl.tagline}</p>
                   <ul className="space-y-1.5 text-meta">
@@ -447,22 +453,33 @@ export function PolicyTemplatesSection() {
                       +{tpl.rules.length} rule{tpl.rules.length === 1 ? "" : "s"}
                     </Badge>
                   ) : null}
-                  <div className="mt-auto pt-1 flex gap-2">
+                  <div className="mt-auto pt-1 flex gap-2 flex-wrap">
                     <Button
                       size="sm"
-                      className="flex-1"
+                      className="flex-1 min-w-[120px]"
                       disabled={isPending || apply.isPending}
                       onClick={() => setConfirm(tpl)}
                     >
-                      {isPending ? "Applying…" : "Apply template"}
+                      {isPending ? "Applying…" : "Apply"}
                     </Button>
-                    <Button
-                      size="sm" variant="outline"
-                      onClick={() => setTestTpl(tpl)}
-                      title="Test prompts"
-                    >
+                    <Button size="sm" variant="outline" onClick={() => editBuiltin(tpl)} title="Edit this template">
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => duplicateBuiltin(tpl)} title="Duplicate as new template">
+                      <Copy className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setTestTpl(tpl)} title="Test prompts">
                       <Beaker className="h-3.5 w-3.5" />
                     </Button>
+                    {tpl.overridden && overrideRow && (
+                      <Button
+                        size="sm" variant="outline"
+                        onClick={() => setResetTarget({ id: overrideRow.id, name: tpl.name })}
+                        title="Reset to default"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
                   </div>
                 </div>
               );
