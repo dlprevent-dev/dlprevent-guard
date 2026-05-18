@@ -110,6 +110,7 @@ const Playground = () => {
 
   const [selection, setSelection] = useState<Selection>(null);
   const [apiKey, setApiKey] = useState("");
+  const [showPasteKey, setShowPasteKey] = useState(false);
   const [model, setModel] = useState<string>("");
   const [prompt, setPrompt] = useState("Write a haiku about firewalls.");
   const [stream, setStream] = useState(true);
