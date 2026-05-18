@@ -2,6 +2,11 @@
 
 Thanks for taking the time to contribute. This document covers the workflow we use day to day.
 
+> **Co-developed with Lovable AI?** AnveGuard is built in the Lovable editor + by
+> external contributors via GitHub PRs. There's a sync gotcha worth knowing
+> before your first PR — see [`docs/CONTRIBUTING-LOVABLE.md`](docs/CONTRIBUTING-LOVABLE.md)
+> for the agreed workflow between Claude Code and Lovable AI on this repo.
+
 ## Setup
 
 See [README.md](README.md#getting-started) for full setup. Short version:
