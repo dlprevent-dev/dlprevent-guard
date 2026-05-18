@@ -66,6 +66,17 @@ const Keys = () => {
   const { call } = useDashboardApi();
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({ queryKey: ["keys"], queryFn: () => call<any>("list_keys") });
+  // Alias counts per key — drives the "+N models" badge that distinguishes
+  // 1:1 keys from N:1 unified-gateway keys at a glance.
+  const { data: aliasData } = useQuery({
+    queryKey: ["aliases", "all"],
+    queryFn: () => call<{ aliases: { api_key_id: string }[] }>("list_aliases"),
+  });
+  const aliasCountByKey = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const a of aliasData?.aliases ?? []) m[a.api_key_id] = (m[a.api_key_id] ?? 0) + 1;
+    return m;
+  }, [aliasData]);
   const { data: provData } = useQuery({
     queryKey: ["providers"],
     queryFn: () => call<{ providers: ProviderDef[]; custom_schema: CustomSchema }>("list_providers"),
