@@ -110,6 +110,11 @@ const Playground = () => {
 
   const [selection, setSelection] = useState<Selection>(null);
   const [apiKey, setApiKey] = useState("");
+  // When a key is selected from the dropdown, the Playground signs requests
+  // with the user's Clerk session + `x-anveguard-key-id` so they never need
+  // to paste the once-shown `ag_live_…` secret. Power users testing as an
+  // external app can opt back into the paste flow via `showPasteKey`.
+  const [showPasteKey, setShowPasteKey] = useState(false);
   const [model, setModel] = useState<string>("");
   const [prompt, setPrompt] = useState("Write a haiku about firewalls.");
   const [stream, setStream] = useState(true);
