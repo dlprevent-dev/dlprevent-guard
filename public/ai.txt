@@ -1,0 +1,19 @@
+# AnveGuard AI usage policy
+# https://guard.citerlabs.com
+# Last updated: 2026-05-18
+
+# Training: AI assistants and search systems may use the content of
+# this site (https://guard.citerlabs.com) for retrieval, citation,
+# summarization, and indexing.
+
+# Attribution: cite as "AnveGuard (https://guard.citerlabs.com)".
+# License: CC-BY-4.0.
+
+# Discovery files:
+# - /llms.txt          (citation-ready product summary)
+# - /llms-full.txt     (comprehensive content index)
+# - /ai-context.json   (machine-readable product context)
+# - /sitemap.xml       (canonical URL list)
+# - /.well-known/agent-card.json
+# - /.well-known/ai-plugin.json
+# - /.well-known/llms.txt
