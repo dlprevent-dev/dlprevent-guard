@@ -937,32 +937,24 @@ async function handleRequest(req: Request): Promise<Response> {
   // this AFTER shape detection but BEFORE the chat-only auth/parse pipeline
   // keeps the handler self-contained.
 
-  // ---- Auth: accept the AnveGuard key in whatever header the SDK sends.
+  // ---- Auth: accept the AnveGuard key in whatever header the SDK sends, OR
+  // a Clerk session token + `x-anveguard-key-id` for in-dashboard callers
+  // (Playground). See resolveProxyKeyAuth for both paths.
   //   - OpenAI / generic:    Authorization: Bearer ag_live_…
   //   - Anthropic SDK:       x-api-key: ag_live_…
   //   - Google Gemini SDK:   ?key=ag_live_…
-  const authHeader = req.headers.get("Authorization") || req.headers.get("authorization") || "";
-  const xApiKey = req.headers.get("x-api-key") || req.headers.get("X-API-Key") || "";
-  const queryKey = reqUrl.searchParams.get("key") || "";
-  const bearer = authHeader.match(/^Bearer\s+(ag_live_\S+)/i)?.[1];
-  const apiKeyPlain = bearer
-    || (xApiKey.startsWith("ag_live_") ? xApiKey : "")
-    || (queryKey.startsWith("ag_live_") ? queryKey : "");
-  if (!apiKeyPlain) {
+  //   - Dashboard session:   Authorization: Bearer <Clerk JWT> + x-anveguard-key-id
+  const auth = await resolveProxyKeyAuth(
+    sb, req,
+    "id,user_id,provider,provider_key_encrypted,model_default,is_active,is_admin,compression_mode,custom_base_url,custom_models_url,custom_kind,custom_auth_scheme,custom_auth_header,custom_extra_headers,custom_path_prefix,custom_chat_path,custom_models_path,custom_response_format",
+  );
+  if (auth.error || !auth.keyRow) {
     return await rateLimitedAuthFailure(sb, req, reqShape,
-      "Missing API key. Provide it in the Authorization header (Bearer ag_live_…), the x-api-key header, or the ?key= query param.",
-      "missing_api_key");
+      auth.error?.message ?? "Unauthorized",
+      auth.error?.code ?? "invalid_api_key");
   }
-  const key_hash = await sha256Hex(apiKeyPlain);
+  const keyRow = auth.keyRow;
 
-  const { data: keyRow } = await sb.from("api_keys")
-    .select("id,user_id,provider,provider_key_encrypted,model_default,is_active,is_admin,compression_mode,custom_base_url,custom_models_url,custom_kind,custom_auth_scheme,custom_auth_header,custom_extra_headers,custom_path_prefix,custom_chat_path,custom_models_path,custom_response_format")
-    .eq("key_hash", key_hash).maybeSingle();
-  if (!keyRow || !keyRow.is_active) {
-    return await rateLimitedAuthFailure(sb, req, reqShape,
-      "Invalid or revoked API key.",
-      "invalid_api_key");
-  }
 
   // Phase 5 — audio transcription. Body is multipart/form-data (file upload),
   // NOT JSON. Branch BEFORE the JSON parse so req.body is still readable as
