@@ -602,6 +602,73 @@ async function handleAudioTranscription(
   });
 }
 
+/**
+ * Resolve the AnveGuard key row for a proxy request via either:
+ *   A. Public path — `Authorization: Bearer ag_live_…` (or x-api-key / ?key=),
+ *      hashed and looked up by `key_hash`. Unchanged behaviour for external SDKs.
+ *   B. Dashboard session — `Authorization: Bearer <Clerk JWT>` plus
+ *      `x-anveguard-key-id: <uuid>`. JWT is verified, key row is loaded by id,
+ *      and `key.user_id === claims.sub` is enforced. Lets the in-app Playground
+ *      send requests without the user pasting the once-shown `ag_live_…` secret.
+ *
+ * Returns `{ keyRow }` on success or `{ error: { message, code } }` on failure.
+ * Callers translate the error through their own error envelope.
+ */
+async function resolveProxyKeyAuth(
+  sb: ReturnType<typeof service>,
+  req: Request,
+  selectColumns: string,
+): Promise<{ keyRow: any | null; error?: { message: string; code: string } }> {
+  const reqUrl = new URL(req.url);
+  const authHeader = req.headers.get("Authorization") || req.headers.get("authorization") || "";
+  const xApiKey = req.headers.get("x-api-key") || req.headers.get("X-API-Key") || "";
+  const queryKey = reqUrl.searchParams.get("key") || "";
+  const sessionKeyId =
+    req.headers.get("x-anveguard-key-id") || req.headers.get("X-AnveGuard-Key-Id") || "";
+
+  // Path A — public secret in any standard slot.
+  const bearerAg = authHeader.match(/^Bearer\s+(ag_live_\S+)/i)?.[1];
+  const apiKeyPlain = bearerAg
+    || (xApiKey.startsWith("ag_live_") ? xApiKey : "")
+    || (queryKey.startsWith("ag_live_") ? queryKey : "");
+  if (apiKeyPlain) {
+    const key_hash = await sha256Hex(apiKeyPlain);
+    const { data } = await sb.from("api_keys")
+      .select(selectColumns).eq("key_hash", key_hash).maybeSingle();
+    if (!data || !(data as any).is_active) {
+      return { keyRow: null, error: { message: "Invalid or revoked API key.", code: "invalid_api_key" } };
+    }
+    return { keyRow: data };
+  }
+
+  // Path B — dashboard session (Clerk JWT + key id header).
+  const bearerAny = authHeader.match(/^Bearer\s+(\S+)/i)?.[1];
+  if (bearerAny && sessionKeyId) {
+    let claims: { sub: string };
+    try { claims = await verifyClerkJwt(bearerAny); }
+    catch {
+      return { keyRow: null, error: { message: "Invalid dashboard session token.", code: "invalid_session" } };
+    }
+    const { data } = await sb.from("api_keys")
+      .select(selectColumns).eq("id", sessionKeyId).maybeSingle();
+    if (!data || !(data as any).is_active) {
+      return { keyRow: null, error: { message: "Invalid or revoked API key.", code: "invalid_api_key" } };
+    }
+    if ((data as any).user_id !== claims.sub) {
+      return { keyRow: null, error: { message: "Key does not belong to the current dashboard session.", code: "key_session_mismatch" } };
+    }
+    return { keyRow: data };
+  }
+
+  return {
+    keyRow: null,
+    error: {
+      message: "Missing API key. Provide it in the Authorization header (Bearer ag_live_…), the x-api-key header, or the ?key= query param.",
+      code: "missing_api_key",
+    },
+  };
+}
+
 async function rateLimitedAuthFailure(
   sb: ReturnType<typeof service>,
   req: Request,
