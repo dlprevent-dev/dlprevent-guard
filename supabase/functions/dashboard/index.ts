@@ -2053,6 +2053,8 @@ Deno.serve(async (req) => {
 
         const changeNote = body?.change_note ? String(body.change_note).slice(0, 500) : null;
         const id = body?.id ? String(body.id) : null;
+        const rawBuiltinId = body?.builtin_id ? String(body.builtin_id) : null;
+        const builtinId = rawBuiltinId && /^[a-z0-9_]{1,64}$/.test(rawBuiltinId) ? rawBuiltinId : null;
 
         const snapshot = (tpl: any, version: number) => ({
           template_id: tpl.id,
@@ -2069,22 +2071,35 @@ Deno.serve(async (req) => {
           created_by: userId,
         });
 
+        // Resolve existing row: by id, or by (user, builtin_id) for built-in overrides.
+        let existingId: string | null = id;
+        let existingVersion = 0;
         if (id) {
-          // Bump version, update template, then snapshot the new state.
           const { data: existing } = await sb.from("policy_templates")
             .select("current_version").eq("id", id).eq("user_id", userId).maybeSingle();
           if (!existing) return json({ error: "Template not found" }, 404);
-          const nextVersion = (existing.current_version ?? 1) + 1;
+          existingVersion = existing.current_version ?? 1;
+        } else if (builtinId) {
+          const { data: existing } = await sb.from("policy_templates")
+            .select("id,current_version").eq("user_id", userId).eq("builtin_id", builtinId).maybeSingle();
+          if (existing) {
+            existingId = existing.id;
+            existingVersion = existing.current_version ?? 1;
+          }
+        }
+
+        if (existingId) {
+          const nextVersion = existingVersion + 1;
           const { data, error } = await sb.from("policy_templates")
             .update({ name, description, policy, settings, rules, applies_to_intents: tplIntents, unknown_intent_fallback: unknownIntentFallback, current_version: nextVersion })
-            .eq("id", id).eq("user_id", userId).select().maybeSingle();
+            .eq("id", existingId).eq("user_id", userId).select().maybeSingle();
           if (error) return json({ error: error.message }, 400);
           if (data) await sb.from("policy_template_versions").insert(snapshot(data, nextVersion));
-          await auditAction(sb, userId, "policy_template.updated", "policy_template", id, { name, new_version: nextVersion });
+          await auditAction(sb, userId, "policy_template.updated", "policy_template", existingId, { name, new_version: nextVersion });
           return json({ template: data });
         }
         const { data, error } = await sb.from("policy_templates")
-          .insert({ user_id: userId, name, description, policy, settings, rules, applies_to_intents: tplIntents, unknown_intent_fallback: unknownIntentFallback, current_version: 1 })
+          .insert({ user_id: userId, builtin_id: builtinId, name, description, policy, settings, rules, applies_to_intents: tplIntents, unknown_intent_fallback: unknownIntentFallback, current_version: 1 })
           .select().maybeSingle();
         if (error) return json({ error: error.message }, 400);
         if (data) await sb.from("policy_template_versions").insert(snapshot(data, 1));
