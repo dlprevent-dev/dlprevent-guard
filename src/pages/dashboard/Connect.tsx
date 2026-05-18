@@ -338,14 +338,52 @@ const Connect = () => {
     if (!editKeyId || !existingKeys) return;
     const k = existingKeys.keys.find((row) => row.id === editKeyId);
     if (!k) return;
-    // We don't have the plaintext for an existing key — that's only shown
-    // once at creation. Edit mode therefore hides the credentials snippet
-    // and rotation lives on the Keys page.
     setCreated({ fullKey: "", id: k.id });
     setName(k.name);
     setModel(k.model_default);
+    // Best-effort: surface the original tile so the "primary provider"
+    // card renders the right label/blurb. Falls back to the Custom tile
+    // for anything we don't recognize.
+    const matched =
+      TILES.find((t) => t.provider === k.provider && (t.id === k.provider || (k.custom_base_url && t.endpointTemplate?.base_url && k.custom_base_url.startsWith(t.endpointTemplate.base_url)))) ||
+      TILES.find((t) => t.provider === k.provider) ||
+      TILES.find((t) => t.id === "custom")!;
+    setTile(matched);
+    if (k.custom_base_url) setCustomBaseUrl(k.custom_base_url);
     setStep(2);
   }, [editKeyId, existingKeys]);
+
+  // ---- Update existing key (edit mode) ----------------------------------
+  const updateKey = useMutation({
+    mutationFn: (patch: Record<string, unknown>) =>
+      call<{ ok: boolean }>("update_key", { body: { id: created?.id, ...patch } }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["keys"] });
+      qc.invalidateQueries({ queryKey: ["endpoints"] });
+      toast.success("Connector updated");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  // Editable fields in edit mode (kept separate from creation state so
+  // unsaved edits don't bleed into the create flow if the user navigates).
+  const [editName, setEditName] = useState("");
+  const [editModel, setEditModel] = useState("");
+  const [changeProviderOpen, setChangeProviderOpen] = useState(false);
+  const [swapTile, setSwapTile] = useState<Tile | null>(null);
+  const [swapKey, setSwapKey] = useState("");
+  const [swapBaseUrl, setSwapBaseUrl] = useState("");
+  const [attachExistingOpen, setAttachExistingOpen] = useState(false);
+  const [attachEndpointId, setAttachEndpointId] = useState("");
+  const [attachAlias, setAttachAlias] = useState("");
+
+  useEffect(() => {
+    if (editKeyId) {
+      setEditName(name);
+      setEditModel(model);
+    }
+  }, [editKeyId, name, model]);
+
 
   // Aliases + endpoints attached to the current AnveGuard key. Refetched
   // after every add/remove so the list is always live.
