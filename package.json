@@ -1,8 +1,8 @@
 {
   "name": "anveguard",
   "private": true,
-  "version": "0.1.0",
-  "description": "Open-source LLM firewall — drop-in OpenAI-compatible proxy with layered policy engine, audit logs, and a dashboard.",
+  "version": "0.2.0",
+  "description": "Open-source LLM firewall \u2014 drop-in OpenAI-compatible proxy with layered policy engine, audit logs, and a dashboard.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/ANVE-AI/prompt-sentinel-flow",
   "repository": {
