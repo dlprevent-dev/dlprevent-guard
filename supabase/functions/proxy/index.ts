@@ -9,7 +9,9 @@ import { chatToResponsesRequest, responsesToChatResponse,
 import {
   evaluate as evaluatePolicy, DEFAULT_SETTINGS,
   evaluateInjection, applySanitization,
+  evaluateRetrieved,
   type PolicyRule, type PolicyIntent, type PolicySettings, type EvaluateResult,
+  type LayerVerdict,
 } from "../_shared/policy_engine.ts";
 import {
   detectRequestShape, translateRequestToOpenAI, translateResponseFromOpenAI,
@@ -1277,6 +1279,39 @@ async function handleRequest(req: Request): Promise<Response> {
     { text: promptText, direction: "input", legacy, rules, intents, settings, conversation: body.messages },
     { systemPrompt, toolsRequested },
   );
+
+  // ---- XPIA / retrieved-content scan ------------------------------------
+  // Indirect-injection scan on tool-role / function-role messages — these
+  // carry retrieved content (RAG chunks, MCP tool replies, function call
+  // results) that didn't come from the user. We apply stricter verdicts
+  // here than to user-direct content per the EchoLeak (CVE-2025-32711)
+  // asymmetry: "ignore previous" inside retrieved bytes has essentially
+  // no legitimate use case. Any block-verdict from this scan upgrades the
+  // overall verdict to block, short-circuits the upstream call, and is
+  // attributed in the audit log with rule= one of the retrieved_* names.
+  const retrievedLayers: LayerVerdict[] = [];
+  for (const msg of body.messages ?? []) {
+    if (msg?.role !== "tool" && msg?.role !== "function") continue;
+    const content = typeof msg.content === "string"
+      ? msg.content
+      : JSON.stringify(msg.content ?? "");
+    if (!content || content.length === 0) continue;
+    const verdicts = evaluateRetrieved(content, {
+      kind: "mcp_tool_result",
+      origin: typeof msg.tool_call_id === "string" ? msg.tool_call_id :
+              typeof msg.name === "string" ? msg.name : undefined,
+    });
+    retrievedLayers.push(...verdicts);
+  }
+  if (retrievedLayers.length > 0) {
+    inputEval.layers.push(...retrievedLayers);
+    if (retrievedLayers.some((l) => l.verdict === "block")) {
+      inputEval.verdict = "block";
+    } else if (retrievedLayers.some((l) => l.verdict === "flag") &&
+               inputEval.verdict === "allow") {
+      inputEval.verdict = "flag";
+    }
+  }
 
   // Every proxied call records the detected intent (or `"unknown"` when the
   // intent classifier is disabled, in shadow mode, or returned no match).

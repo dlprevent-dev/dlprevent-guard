@@ -10,6 +10,8 @@ A drop-in OpenAI-compatible proxy that inspects, governs, and audits every call 
 [![CI](https://img.shields.io/badge/CI-passing-22c55e?style=flat-square&logo=githubactions&logoColor=white)](./.github/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache_2.0-blue?style=flat-square)](./LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-ff69b4?style=flat-square)](./CONTRIBUTING.md)
+[![Detectors: 60+](https://img.shields.io/badge/detectors-60%2B-7c3aed?style=flat-square)](./supabase/functions/_shared/policy_engine.ts)
+[![Tests: 130+](https://img.shields.io/badge/tests-130%2B%20passing-22c55e?style=flat-square)](./supabase/functions/_shared/policy_engine_attacks.test.ts)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?style=flat-square&logo=typescript&logoColor=white)](./tsconfig.json)
 [![Deno Edge](https://img.shields.io/badge/Deno-edge%20functions-000?style=flat-square&logo=deno&logoColor=white)](./supabase/functions)
 
@@ -76,6 +78,38 @@ Most teams ship LLM features with **no record** of what was sent, what came back
   <img src="docs/images/product.png" alt="Inspect, enforce, audit — the three product pillars shown on the AnveGuard landing page" width="92%" />
   <br /><sub><i>Inspect &middot; Enforce &middot; Audit — the three pillars, in one console.</i></sub>
 </div>
+
+---
+
+## What's detected
+
+AnveGuard ships **38 named injection patterns**, **16 statistical detectors**, and **9 channel-aware XPIA / indirect-injection rules** out of the box — 63 distinct detection rules. Every one has unit tests in [`policy_engine_attacks.test.ts`](./supabase/functions/_shared/policy_engine_attacks.test.ts) (130+ passing).
+
+| Family | Coverage |
+|---|---|
+| **Direct prompt injection** | `ignore_prior_instructions`, `new_instructions_override`, `instructions_above_are_fake`, `role_reset`, `repeat_text_above`, `verbatim_initial_prompt`, `begin_with_system_prompt` |
+| **Persona jailbreaks** | DAN, AIM, BetterDAN, STAN, DUDE, Mongo Tom, Evil Confidant, Machiavelli, UCAR, EvilBOT, ChadGPT, Sydney 2.0, DAN 10+, plus generic `act_as_unrestricted` / `pretend_no_restrictions` / `you_are_now_persona` / `two_responses_jailbreak` |
+| **Narrative misdirection** | Fictional / hypothetical / academic framing combined with harmful subjects, grandma trope, deceased-relative variants. Active *and* passive voice ("explains how X is synthesized") |
+| **Refusal suppression** | `refusal_suppression`, `answer_regardless`, `no_warnings_disclaimers`, `force_compliance_prefix` ("start your response with 'Sure'") |
+| **Authority impersonation** | False "I'm from OpenAI/Anthropic's safety team", `policy_was_updated` ("the new policy now allows X") |
+| **Skeleton Key** (Microsoft 2024) | `skeleton_key_update` + `skeleton_key_prefix_warning` composite |
+| **Many-shot jailbreak** (Anthropic 2024) | Detects role-marker alternations (`Human:`/`Assistant:` etc) embedded in single user messages — the MSJ signature |
+| **Unicode smuggling** | Tag-character (CVE-2025-32711), zero-width, variation selectors, **homoglyph** (Cyrillic а / Greek ο masquerading as Latin) |
+| **Cipher attacks** | ROT13/Caesar/Atbash mention + decode-and-execute, leetspeak density, Morse, Pig Latin |
+| **Adversarial suffix** | GCG / AutoDAN-Turbo / BEAST trailing-garbage signatures (bracket clusters, mid-word case changes, gibberish tokens) |
+| **Chain-of-thought extraction** | `<thinking>` / `<scratchpad>` reasoning leak probes (o1/Claude extended thinking) |
+| **Pseudo role tags** | Fake `[system]`, `<\|im_start\|>`, `[INST]` chat-template tokens injected into user content |
+| **System-role JSON** | `{"role":"system","content":"..."}` pasted in user content |
+| **Encoded smuggling** | Base64, hex, URL-encoded payload density (`encoded_density`); explicit decode-and-execute framing |
+| **Output guards** | `output_pii_leak` (email, phone, SSN, credit-card, IP), `output_repetition` (Carlini divergence attack), `system_prompt_leak` (verbatim system-prompt slices), `tool_injection` (fabricated tool_calls JSON), `credential_shape` (sk-proj-, ag_live_, ghp_, AIza, stripe live/test, JWT, RSA private keys) |
+| **XPIA / indirect** | New `evaluateRetrieved()` scanner — 9 channel-aware detectors for RAG chunks, MCP tool results, scraped HTML, email: instruction-override, imperative-to-model, markdown image exfil (EchoLeak), hidden HTML, HTML-comment injection, cross-tool reference (shadowing), SQL-write in NL→SQL context (Vanna.AI CVE-2024-5565), dangerous Python in code-gen retrieval (Langflow CVE-2025-3248), tag-char smuggling. Wired into the proxy's tool-result path. |
+| **Multi-turn behavioral** | Gradual priming ("boil the frog"), trust-building, instruction-churn, persona-loading across turns |
+| **Risk-trio rule** | Co-occurrence of (untrusted_input × outbound_channel × privileged_context) — the agentic exfiltration shape that matches the 2025 Supabase/Cursor/MCP-breach pattern |
+| **PII detection** | Email, US phone, SSN, credit cards (with Luhn validation), IPv4/IPv6, OpenAI/Anthropic/AnveGuard keys, JWT — block/sanitize/flag configurable per workspace |
+
+Plus a layered **multilingual** keyword engine (fuzzy match + edit distance + semantic match) and a configurable intent classifier (LLM-backed, with shadow mode for low-friction rollout).
+
+**Mapped to standards:** OWASP LLM Top 10 (2025), OWASP Agentic Top 10, OWASP MCP Top 10. CVE coverage includes CVE-2025-32711 (EchoLeak), CVE-2024-5565 (Vanna.AI), CVE-2025-3248 (Langflow), CVE-2024-7042 (LangChain).
 
 ---
 
