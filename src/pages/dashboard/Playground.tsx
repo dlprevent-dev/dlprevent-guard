@@ -17,8 +17,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Send, ShieldAlert, ShieldCheck, Terminal, KeyRound, Plug, Plus, Clock } from "lucide-react";
+import { Send, ShieldAlert, ShieldCheck, Terminal, KeyRound, Plug, Plus, Clock, Lock } from "lucide-react";
 import { useDashboardApi } from "@/lib/api";
+import { useAuth } from "@clerk/clerk-react";
 import { toast } from "sonner";
 import { formatDistanceToNowStrict } from "date-fns";
 import { PageHeader } from "@/components/page-header";
