@@ -8,7 +8,7 @@
 A drop-in OpenAI-compatible proxy that inspects, governs, and audits every call to OpenAI, Anthropic, Google, Perplexity, and any custom provider — without changing your application code.
 
 [![CI](https://img.shields.io/badge/CI-passing-22c55e?style=flat-square&logo=githubactions&logoColor=white)](./.github/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](./LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache_2.0-blue?style=flat-square)](./LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-ff69b4?style=flat-square)](./CONTRIBUTING.md)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?style=flat-square&logo=typescript&logoColor=white)](./tsconfig.json)
 [![Deno Edge](https://img.shields.io/badge/Deno-edge%20functions-000?style=flat-square&logo=deno&logoColor=white)](./supabase/functions)
@@ -197,8 +197,8 @@ A short tour of the surfaces you actually live in:
 ### Setup
 
 ```bash
-git clone https://github.com/<you>/anveguard.git
-cd anveguard
+git clone https://github.com/ANVE-AI/prompt-sentinel-flow.git
+cd prompt-sentinel-flow
 npm ci
 cp .env.example .env        # fill in VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY, VITE_SUPABASE_PROJECT_ID
 npm run dev                 # http://localhost:8080
@@ -305,6 +305,6 @@ For maintainers: [`SECURITY.md`](./SECURITY.md), [`CONTRIBUTING.md`](./CONTRIBUT
 
 ## License
 
-[MIT](./LICENSE) © AnveGuard contributors.
+[Apache 2.0](./LICENSE) — Copyright 2026 ANVE AI and AnveGuard contributors.
 
 If AnveGuard saves you from a leaky prompt, an exploded token bill, or a 3am incident — drop us a ⭐ on GitHub. It's the cheapest way to support the project.
