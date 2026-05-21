@@ -204,7 +204,7 @@ async function handleImageGeneration(
     const blockReason = promptVerdict.layers.find((l) => l.verdict === "block")?.reason
       ?? "Blocked by input policy.";
     // Log the block so it appears in /dashboard/threats.
-    await sb.from("request_logs").insert({
+    await insertRequestLog(sb, {
       user_id: keyRow.user_id,
       api_key_id: keyRow.id,
       provider: keyRow.provider,
@@ -216,7 +216,7 @@ async function handleImageGeneration(
       verdict_layers: promptVerdict.layers,
       block_reason: blockReason,
       latency_ms: Date.now() - start,
-    });
+    }, policyState.settings);
     await sb.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyRow.id);
     return errorResponse("openai", 400, `${policyState.blockMessage} ${blockReason}`,
       { code: "content_filter", anveguard: { reason: blockReason, layers: promptVerdict.layers } });
@@ -258,14 +258,14 @@ async function handleImageGeneration(
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    await sb.from("request_logs").insert({
+    await insertRequestLog(sb, {
       user_id: keyRow.user_id, api_key_id: keyRow.id, provider: keyRow.provider,
       model: publicBody?.model ?? "image-gen",
       messages: [{ role: "user", content: prompt }],
       response: { error: msg.slice(0, 500) },
       status: "error", verdict: "allow", verdict_layers: promptVerdict.layers,
       block_reason: null, latency_ms: Date.now() - start,
-    });
+    }, policyState.settings);
     return errorResponse("openai", 502, "Upstream image-gen request failed.",
       { code: "upstream_error", anveguard: { detail: msg } });
   }
@@ -274,8 +274,12 @@ async function handleImageGeneration(
   let respJson: any = null;
   try { respJson = respText ? JSON.parse(respText) : null; } catch { /* keep raw */ }
 
+  const imageCount = Array.isArray(respJson?.data) ? respJson.data.length : 1;
+  const estimatedCost = imageCount * 0.04;
+  const promptTokens = approximateTokens(prompt);
+
   // --- 5. Log + return ------------------------------------------------
-  await sb.from("request_logs").insert({
+  await insertRequestLog(sb, {
     user_id: keyRow.user_id,
     api_key_id: keyRow.id,
     provider: keyRow.provider,
@@ -287,7 +291,7 @@ async function handleImageGeneration(
       ? {
           model: respJson?.model ?? null,
           created: respJson?.created ?? null,
-          image_count: Array.isArray(respJson?.data) ? respJson.data.length : 0,
+          image_count: imageCount,
           first_revised_prompt: respJson?.data?.[0]?.revised_prompt ?? null,
           response_format: respJson?.data?.[0]?.url ? "url" : respJson?.data?.[0]?.b64_json ? "b64_json" : null,
         }
@@ -297,7 +301,11 @@ async function handleImageGeneration(
     verdict_layers: promptVerdict.layers,
     block_reason: null,
     latency_ms: Date.now() - start,
-  });
+  }, policyState.settings);
+
+  if (upstream.ok) {
+    await incrementSpendsAtomic(sb, keyRow.id, estimatedCost, promptTokens);
+  }
   await sb.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyRow.id);
 
   // Pass the upstream response through unchanged — clients get the OpenAI
@@ -365,7 +373,7 @@ async function handleAudioSpeech(
   if (promptVerdict.verdict === "block") {
     const blockReason = promptVerdict.layers.find((l) => l.verdict === "block")?.reason
       ?? "Blocked by input policy.";
-    await sb.from("request_logs").insert({
+    await insertRequestLog(sb, {
       user_id: keyRow.user_id, api_key_id: keyRow.id,
       provider: keyRow.provider, model: publicBody?.model ?? "tts",
       messages: [{ role: "user", content: input.slice(0, 1000) }],
@@ -374,7 +382,7 @@ async function handleAudioSpeech(
       verdict_layers: promptVerdict.layers,
       block_reason: blockReason,
       latency_ms: Date.now() - start,
-    });
+    }, policyState.settings);
     await sb.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyRow.id);
     return errorResponse("openai", 400, `${policyState.blockMessage} ${blockReason}`,
       { code: "content_filter", anveguard: { reason: blockReason, layers: promptVerdict.layers } });
@@ -422,7 +430,7 @@ async function handleAudioSpeech(
   // produces ~few-MB mp3 files, manageable in edge function memory.
   const audioBuf = await upstream.arrayBuffer();
 
-  await sb.from("request_logs").insert({
+  await insertRequestLog(sb, {
     user_id: keyRow.user_id, api_key_id: keyRow.id,
     provider: keyRow.provider, model: publicBody?.model ?? "tts",
     messages: [{ role: "user", content: input.slice(0, 1000) }],
@@ -438,7 +446,14 @@ async function handleAudioSpeech(
     verdict_layers: promptVerdict.layers,
     block_reason: null,
     latency_ms: Date.now() - start,
-  });
+  }, policyState.settings);
+
+  if (upstream.ok) {
+    const isHd = String(publicBody?.model ?? "").includes("hd");
+    const estimatedCost = (input.length / 1000) * (isHd ? 0.030 : 0.015);
+    const promptTokens = approximateTokens(input);
+    await incrementSpendsAtomic(sb, keyRow.id, estimatedCost, promptTokens);
+  }
   await sb.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyRow.id);
 
   return new Response(audioBuf, {
@@ -543,8 +558,8 @@ async function handleAudioTranscription(
   // than block silently — the caller still gets the response, but with the
   // policy verdict echoed under `anveguard` for SDK introspection.
   let promptVerdict: Awaited<ReturnType<typeof evaluatePolicy>> | null = null;
+  const policyState = await loadWorkspacePolicy(sb, keyRow.user_id);
   if (transcribed && upstream.ok) {
-    const policyState = await loadWorkspacePolicy(sb, keyRow.user_id);
     try {
       promptVerdict = await evaluatePolicy({
         text: transcribed, direction: "input",
@@ -561,7 +576,7 @@ async function handleAudioTranscription(
         ?? "Blocked by input policy.";
       // Log as blocked_output (transcription is conceptually output of the
       // model — even though the resulting text would BECOME an input later).
-      await sb.from("request_logs").insert({
+      await insertRequestLog(sb, {
         user_id: keyRow.user_id, api_key_id: keyRow.id,
         provider: keyRow.provider, model: "whisper-transcription",
         messages: [{ role: "user", content: "[audio file]" }],
@@ -570,7 +585,7 @@ async function handleAudioTranscription(
         verdict_layers: promptVerdict.layers,
         block_reason: blockReason,
         latency_ms: Date.now() - start,
-      });
+      }, policyState.settings);
       await sb.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyRow.id);
       return errorResponse("openai", 400, `${policyState.blockMessage} ${blockReason}`,
         { code: "content_filter", anveguard: { reason: blockReason, layers: promptVerdict.layers } });
@@ -578,7 +593,7 @@ async function handleAudioTranscription(
   }
 
   // Log + return.
-  await sb.from("request_logs").insert({
+  await insertRequestLog(sb, {
     user_id: keyRow.user_id, api_key_id: keyRow.id,
     provider: keyRow.provider, model: "whisper-transcription",
     messages: [{ role: "user", content: "[audio file]" }],
@@ -590,7 +605,13 @@ async function handleAudioTranscription(
     verdict_layers: promptVerdict?.layers ?? [],
     block_reason: null,
     latency_ms: Date.now() - start,
-  });
+  }, policyState.settings);
+
+  if (upstream.ok) {
+    const estimatedCost = Math.max(0.006, (buf.byteLength / (1024 * 1024)) * 0.006);
+    const promptTokens = approximateTokens(transcribed);
+    await incrementSpendsAtomic(sb, keyRow.id, estimatedCost, promptTokens);
+  }
   await sb.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyRow.id);
 
   return new Response(respText, {
@@ -810,6 +831,191 @@ async function evaluateOutput(
   return { status: "allowed", blockReason: null, layers: r.layers };
 }
 
+function calculateEstimatedCost(model: string, promptTokens: number, completionTokens: number): number {
+  const m = String(model).toLowerCase();
+  let inputRate = 0.0000015; // default fallback input price per token
+  let outputRate = 0.0000045; // default fallback output price per token
+
+  if (m.includes("gpt-4o-mini") || m.includes("gpt-4-mini") || m.includes("gpt-5-mini")) {
+    inputRate = 0.00000015;
+    outputRate = 0.00000060;
+  } else if (m.includes("gpt-4o") || m.includes("gpt-5")) {
+    inputRate = 0.0000025;
+    outputRate = 0.0000100;
+  } else if (m.includes("o1") || m.includes("o3") || m.includes("gpt-4")) {
+    inputRate = 0.0000030;
+    outputRate = 0.0000120;
+  } else if (m.includes("claude-3-5-sonnet") || m.includes("claude-4")) {
+    inputRate = 0.0000030;
+    outputRate = 0.0000150;
+  } else if (m.includes("claude-3-5-haiku")) {
+    inputRate = 0.0000008;
+    outputRate = 0.0000040;
+  } else if (m.includes("gemini-1.5-flash") || m.includes("gemini-2-flash")) {
+    inputRate = 0.000000075;
+    outputRate = 0.00000030;
+  } else if (m.includes("gemini-1.5-pro") || m.includes("gemini-2-pro")) {
+    inputRate = 0.00000125;
+    outputRate = 0.00000500;
+  } else if (m.includes("deepseek")) {
+    inputRate = 0.00000014;
+    outputRate = 0.00000028;
+  }
+
+  return (promptTokens * inputRate) + (completionTokens * outputRate);
+}
+
+function approximateTokens(text: string): number {
+  if (!text) return 0;
+  return Math.ceil(text.length / 4);
+}
+
+function checkApiKeyQuota(
+  sb: ReturnType<typeof service>,
+  keyRow: any,
+  shape: RequestShape
+): { allowed: boolean; errorResponse?: Response } {
+  const hasSpendLimit = keyRow.spend_limit_usd !== null && keyRow.spend_limit_usd !== undefined;
+  const hasTokenLimit = keyRow.token_limit !== null && keyRow.token_limit !== undefined;
+  if (!hasSpendLimit && !hasTokenLimit) {
+    return { allowed: true };
+  }
+
+  const now = new Date();
+  const limitResetAt = keyRow.limit_reset_at ? new Date(keyRow.limit_reset_at) : null;
+  let currentSpend = Number(keyRow.current_spend_usd || 0);
+  let currentTokenSpend = Number(keyRow.current_token_spend || 0);
+
+  if (limitResetAt && now >= limitResetAt) {
+    currentSpend = 0;
+    currentTokenSpend = 0;
+    let nextReset: Date | null = null;
+    const window = keyRow.limit_window || "infinite";
+    if (window === "daily") {
+      nextReset = new Date(now);
+      nextReset.setDate(nextReset.getDate() + 1);
+      nextReset.setHours(0, 0, 0, 0);
+    } else if (window === "monthly") {
+      nextReset = new Date(now);
+      nextReset.setMonth(nextReset.getMonth() + 1);
+      nextReset.setDate(1);
+      nextReset.setHours(0, 0, 0, 0);
+    }
+
+    sb.from("api_keys").update({
+      current_spend_usd: 0,
+      current_token_spend: 0,
+      limit_reset_at: nextReset ? nextReset.toISOString() : null,
+    }).eq("id", keyRow.id).then(({ error }) => {
+      if (error) console.error("Failed to reset api key quota:", error);
+    });
+  } else if (!limitResetAt && keyRow.limit_window && keyRow.limit_window !== "infinite") {
+    let nextReset: Date | null = null;
+    const window = keyRow.limit_window;
+    if (window === "daily") {
+      nextReset = new Date(now);
+      nextReset.setDate(nextReset.getDate() + 1);
+      nextReset.setHours(0, 0, 0, 0);
+    } else if (window === "monthly") {
+      nextReset = new Date(now);
+      nextReset.setMonth(nextReset.getMonth() + 1);
+      nextReset.setDate(1);
+      nextReset.setHours(0, 0, 0, 0);
+    }
+    if (nextReset) {
+      sb.from("api_keys").update({
+        limit_reset_at: nextReset.toISOString(),
+      }).eq("id", keyRow.id).then(({ error }) => {
+        if (error) console.error("Failed to initialize reset date:", error);
+      });
+    }
+  }
+
+  if (hasSpendLimit && currentSpend >= Number(keyRow.spend_limit_usd)) {
+    return {
+      allowed: false,
+      errorResponse: errorResponse(shape, 429, "API key spend limit exceeded.", {
+        code: "spend_limit_exceeded",
+        type: "insufficient_funds",
+      })
+    };
+  }
+
+  if (hasTokenLimit && currentTokenSpend >= Number(keyRow.token_limit)) {
+    return {
+      allowed: false,
+      errorResponse: errorResponse(shape, 429, "API key token budget exceeded.", {
+        code: "token_limit_exceeded",
+        type: "insufficient_funds",
+      })
+    };
+  }
+
+  return { allowed: true };
+}
+
+async function insertRequestLog(
+  sb: ReturnType<typeof service>,
+  log: Record<string, any>,
+  settings?: any
+) {
+  try {
+    const enableMetadataOnly = settings?.enable_metadata_only_logs === true;
+    if (enableMetadataOnly) {
+      if (log.messages) {
+        const plainMessages = typeof log.messages === "string" ? log.messages : JSON.stringify(log.messages);
+        const hash = await sha256Hex(plainMessages);
+        log.messages = [
+          { role: "system", content: `[SCRUBBED - ZERO KNOWLEDGE HIPAA LOGS ENABLED. Payload SHA-256: ${hash}]` }
+        ];
+      }
+      if (log.response) {
+        const plainResponse = typeof log.response === "string" ? log.response : JSON.stringify(log.response);
+        const hash = await sha256Hex(plainResponse);
+        log.response = {
+          object: "chat.completion",
+          choices: [{
+            index: 0,
+            message: { role: "assistant", content: `[SCRUBBED - ZERO KNOWLEDGE HIPAA LOGS ENABLED. Payload SHA-256: ${hash}]` }
+          }],
+          usage: log.response?.usage || { prompt_tokens: log.tokens_in || 0, completion_tokens: log.tokens_out || 0 }
+        };
+      }
+      if (log.verdict_layers && Array.isArray(log.verdict_layers)) {
+        log.verdict_layers = log.verdict_layers.map((l: any) => ({
+          ...l,
+          matched: l.matched ? "[SCRUBBED]" : undefined,
+          reason: l.reason ? l.reason.replace(/["'].*?["']/g, "'[SCRUBBED]'") : undefined
+        }));
+      }
+    }
+    return await sb.from("request_logs").insert(log);
+  } catch (err) {
+    console.error("Failed inserting request log:", err);
+  }
+}
+
+async function incrementSpendsAtomic(
+  sb: ReturnType<typeof service>,
+  keyId: string,
+  costUsd: number,
+  tokens: number
+) {
+  try {
+    const { error } = await sb.rpc("increment_api_key_spends", {
+      _key_id: keyId,
+      _cost: costUsd,
+      _tokens: tokens,
+    });
+    if (error) {
+      console.error("Failed to increment API key spends atomically:", error);
+    }
+  } catch (err) {
+    console.error("Failed executing increment_api_key_spends RPC:", err);
+  }
+}
+
+
 
 
 Deno.serve(async (req) => {
@@ -866,7 +1072,7 @@ async function handleListModels(req: Request): Promise<Response> {
 
   const auth = await resolveProxyKeyAuth(
     sb, req,
-    "id,user_id,provider,provider_key_encrypted,is_active,custom_base_url,custom_models_url,custom_kind,custom_auth_scheme,custom_auth_header,custom_extra_headers,custom_path_prefix,custom_chat_path,custom_models_path,custom_response_format",
+    "id,user_id,provider,provider_key_encrypted,is_active,custom_base_url,custom_models_url,custom_kind,custom_auth_scheme,custom_auth_header,custom_extra_headers,custom_path_prefix,custom_chat_path,custom_models_path,custom_response_format,spend_limit_usd,current_spend_usd,token_limit,current_token_spend,limit_window,limit_reset_at",
   );
   if (auth.error || !auth.keyRow) {
     return errorResponse("openai", 401, auth.error?.message ?? "Unauthorized", { code: auth.error?.code ?? "invalid_api_key" });
@@ -961,7 +1167,7 @@ async function handleRequest(req: Request): Promise<Response> {
   //   - Dashboard session:   Authorization: Bearer <Clerk JWT> + x-anveguard-key-id
   const auth = await resolveProxyKeyAuth(
     sb, req,
-    "id,user_id,provider,provider_key_encrypted,model_default,is_active,is_admin,compression_mode,custom_base_url,custom_models_url,custom_kind,custom_auth_scheme,custom_auth_header,custom_extra_headers,custom_path_prefix,custom_chat_path,custom_models_path,custom_response_format",
+    "id,user_id,provider,provider_key_encrypted,model_default,is_active,is_admin,compression_mode,custom_base_url,custom_models_url,custom_kind,custom_auth_scheme,custom_auth_header,custom_extra_headers,custom_path_prefix,custom_chat_path,custom_models_path,custom_response_format,spend_limit_usd,current_spend_usd,token_limit,current_token_spend,limit_window,limit_reset_at",
   );
   if (auth.error || !auth.keyRow) {
     return await rateLimitedAuthFailure(sb, req, reqShape,
@@ -969,6 +1175,12 @@ async function handleRequest(req: Request): Promise<Response> {
       auth.error?.code ?? "invalid_api_key");
   }
   const keyRow = auth.keyRow;
+
+  // Enforce Spend limits & Token Budgets
+  const quota = checkApiKeyQuota(sb, keyRow, reqShape);
+  if (!quota.allowed && quota.errorResponse) {
+    return quota.errorResponse;
+  }
 
 
   // Phase 5 — audio transcription. Body is multipart/form-data (file upload),
@@ -1303,7 +1515,7 @@ async function handleRequest(req: Request): Promise<Response> {
         ? `Throttled: backoff active (${throttledCount} prior throttle${throttledCount === 1 ? "" : "s"} in ${throttleWindowMin} min). Retry in ${retryAfterSec}s.`
         : `Throttled: ${riskyCount} risky requests in the last ${throttleWindowMin} min (threshold ${throttleThreshold}). Retry in ${retryAfterSec}s.`;
 
-      await sb.from("request_logs").insert({
+      await insertRequestLog(sb, {
         user_id: keyRow.user_id, api_key_id: keyRow.id, provider: keyRow.provider,
         model, messages: body.messages,
         // Throttle fires before the intent classifier runs, so we record
@@ -1324,7 +1536,7 @@ async function handleRequest(req: Request): Promise<Response> {
           }),
         }],
         latency_ms: Date.now() - start, tokens_in: 0, tokens_out: 0,
-      });
+      }, settings);
       return errorResponse(reqShape, 429, reason, {
         code: "rate_limit_exceeded",
         headers: { "Retry-After": String(retryAfterSec) },
@@ -1408,12 +1620,12 @@ async function handleRequest(req: Request): Promise<Response> {
       usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
       anveguard: { blocked: true, reason, layers: inputEval.layers },
     };
-    await sb.from("request_logs").insert({
+    await insertRequestLog(sb, {
       ...logBase, status: "blocked_input", block_reason: reason,
       verdict: "block", verdict_layers: inputEval.layers,
       response: responsePayload, latency_ms: Date.now() - start,
       tokens_in: 0, tokens_out: 0,
-    });
+    }, settings);
     await sb.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyRow.id);
     // If the caller asked for SSE, deliver the block as a synthetic stream so
     // OpenAI SDKs that iterate the stream finish cleanly instead of hanging.
@@ -1576,10 +1788,10 @@ async function handleRequest(req: Request): Promise<Response> {
         (!isAbort && routeConfig.fallback_on_5xx)
       );
       if (canFallback && i < attempts.length - 1) continue;
-      await sb.from("request_logs").insert({
+      await insertRequestLog(sb, {
         ...logBase, model: chosenModel, status: "error", block_reason: lastErrorReason,
         latency_ms: Date.now() - start,
-      });
+      }, settings);
       return errorResponse(reqShape, lastErrorStatus, lastErrorReason, { code: lastErrorStatus === 504 ? "upstream_timeout" : "upstream_unreachable" });
     }
     if (tid) clearTimeout(tid);
@@ -1595,10 +1807,10 @@ async function handleRequest(req: Request): Promise<Response> {
         (is429 && routeConfig.fallback_on_429)
       );
       if (canFallback && i < attempts.length - 1) continue;
-      await sb.from("request_logs").insert({
+      await insertRequestLog(sb, {
         ...logBase, model: chosenModel, status: "error", block_reason: lastErrorReason,
         latency_ms: Date.now() - start,
-      });
+      }, settings);
       // Pass-through OpenAI-shape upstream errors verbatim (the upstream
       // already used the OpenAI envelope) so SDK error handlers see exactly
       // what they expect. For other shapes, translate.
@@ -1616,10 +1828,10 @@ async function handleRequest(req: Request): Promise<Response> {
   }
 
   if (!upstream) {
-    await sb.from("request_logs").insert({
+    await insertRequestLog(sb, {
       ...logBase, status: "error", block_reason: lastErrorReason || "All route attempts failed",
       latency_ms: Date.now() - start,
-    });
+    }, settings);
     return errorResponse(reqShape, lastErrorStatus, lastErrorReason || "All route attempts failed", { code: "all_attempts_failed" });
   }
 
@@ -1635,15 +1847,21 @@ async function handleRequest(req: Request): Promise<Response> {
       const { stream: oaiStream, done } = anthropicStreamToOpenAI(upstream.body, model);
       done.then(async ({ assistantText, usage }) => {
         const out = await evaluateOutput(assistantText, policyState, { systemPrompt, toolsRequested });
-        await sb.from("request_logs").insert({
+        const promptTokens = usage?.prompt_tokens ?? approximateTokens(promptText);
+        const completionTokens = usage?.completion_tokens ?? approximateTokens(assistantText);
+        const costUsd = calculateEstimatedCost(model, promptTokens, completionTokens);
+
+        await insertRequestLog(sb, {
           ...logBase, status: out.status, block_reason: out.blockReason,
           verdict: out.status === "blocked_output" ? "block" : "allow",
           verdict_layers: out.layers,
           response: { streamed: true, content: assistantText },
           latency_ms: Date.now() - start,
-          tokens_in: usage?.prompt_tokens ?? null,
-          tokens_out: usage?.completion_tokens ?? null,
-        });
+          tokens_in: promptTokens,
+          tokens_out: completionTokens,
+        }, settings);
+
+        await incrementSpendsAtomic(sb, keyRow.id, costUsd, promptTokens + completionTokens);
         await sb.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyRow.id);
       });
       return new Response(oaiStream, { headers: sseHeaders });
@@ -1653,15 +1871,21 @@ async function handleRequest(req: Request): Promise<Response> {
       const { stream: oaiStream, done } = responsesStreamToChat(upstream.body, model);
       done.then(async ({ assistantText, usage, finalModel }) => {
         const out = await evaluateOutput(assistantText, policyState, { systemPrompt, toolsRequested });
-        await sb.from("request_logs").insert({
+        const promptTokens = usage?.prompt_tokens ?? approximateTokens(promptText);
+        const completionTokens = usage?.completion_tokens ?? approximateTokens(assistantText);
+        const costUsd = calculateEstimatedCost(finalModel, promptTokens, completionTokens);
+
+        await insertRequestLog(sb, {
           ...logBase, model: finalModel, status: out.status, block_reason: out.blockReason,
           verdict: out.status === "blocked_output" ? "block" : "allow",
           verdict_layers: out.layers,
           response: { streamed: true, content: assistantText },
           latency_ms: Date.now() - start,
-          tokens_in: usage?.prompt_tokens ?? null,
-          tokens_out: usage?.completion_tokens ?? null,
-        });
+          tokens_in: promptTokens,
+          tokens_out: completionTokens,
+        }, settings);
+
+        await incrementSpendsAtomic(sb, keyRow.id, costUsd, promptTokens + completionTokens);
         await sb.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyRow.id);
       });
       return new Response(oaiStream, { headers: sseHeaders });
@@ -1684,6 +1908,8 @@ async function handleRequest(req: Request): Promise<Response> {
     const decoder = new TextDecoder();
     const encoder = new TextEncoder();
 
+    let streamBlocked = false;
+
     const transformed = new ReadableStream({
       async start(controller) {
         const reader = upstream.body!.getReader();
@@ -1694,6 +1920,7 @@ async function handleRequest(req: Request): Promise<Response> {
             buffered += decoder.decode(value, { stream: true });
             // Re-emit complete lines; preserve partial trailing line in buffer.
             let nl;
+            let blocked = false;
             while ((nl = buffered.indexOf("\n")) !== -1) {
               const rawLine = buffered.slice(0, nl + 1); // include the \n
               buffered = buffered.slice(nl + 1);
@@ -1707,12 +1934,62 @@ async function handleRequest(req: Request): Promise<Response> {
                 try {
                   const obj = JSON.parse(payload);
                   const delta = obj?.choices?.[0]?.delta?.content;
-                  if (typeof delta === "string") assistantText += delta;
+                  if (typeof delta === "string") {
+                    assistantText += delta;
+                    
+                    // Evaluate policy mid-stream on accumulated text!
+                    if (assistantText.length > 0) {
+                      const out = await evaluateOutput(assistantText, policyState, { systemPrompt, toolsRequested });
+                      if (out.status === "blocked_output") {
+                        blocked = true;
+                        streamBlocked = true;
+                        
+                        // Abort upstream reader immediately
+                        try { await reader.cancel(); } catch { /* noop */ }
+                        
+                        // Enqueue synthetic block chunk
+                        controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                          id: `chatcmpl-${crypto.randomUUID()}`,
+                          object: "chat.completion.chunk",
+                          created: Math.floor(Date.now() / 1000),
+                          model: finalModel,
+                          choices: [{ index: 0, delta: { content: `\n\n${blockMessage}` }, finish_reason: "content_filter" }],
+                          anveguard: { blocked: true, reason: out.blockReason, layers: out.layers },
+                        })}\n\n`));
+                        
+                        controller.enqueue(SSE_DONE);
+                        
+                        // Log blocked request and spent limits atomically
+                        const promptTokens = finalUsage?.prompt_tokens ?? approximateTokens(promptText);
+                        const completionTokens = finalUsage?.completion_tokens ?? approximateTokens(assistantText);
+                        const costUsd = calculateEstimatedCost(finalModel, promptTokens, completionTokens);
+                        
+                        await insertRequestLog(sb, {
+                          ...logBase, model: finalModel,
+                          status: "blocked_output",
+                          block_reason: out.blockReason,
+                          verdict: "block",
+                          verdict_layers: out.layers,
+                          response: { streamed: true, content: assistantText, blocked: true },
+                          latency_ms: Date.now() - start,
+                          tokens_in: promptTokens,
+                          tokens_out: completionTokens,
+                        }, settings);
+                        
+                        await incrementSpendsAtomic(sb, keyRow.id, costUsd, promptTokens + completionTokens);
+                        break;
+                      }
+                    }
+                  }
                   if (obj?.usage) finalUsage = obj.usage;
                   if (obj?.model) finalModel = obj.model;
                 } catch { /* partial JSON, just forward */ }
               }
               controller.enqueue(encoder.encode(rawLine));
+            }
+            if (blocked) {
+              controller.close();
+              return;
             }
           }
           // Flush any trailing bytes (no newline).
@@ -1728,35 +2005,43 @@ async function handleRequest(req: Request): Promise<Response> {
             { code: "upstream_stream_error" },
           )));
         } finally {
-          // Run output policy on the accumulated text. If it blocks, emit a
-          // synthetic content_filter chunk so the client knows the answer was
-          // suppressed (the partial deltas already on the wire are by design;
-          // we cannot un-send them).
-          const out = await evaluateOutput(assistantText, policyState, { systemPrompt, toolsRequested });
-          if (out.status === "blocked_output") {
-            controller.enqueue(sseEncode({
-              id: `chatcmpl-${crypto.randomUUID()}`,
-              object: "chat.completion.chunk",
-              created: Math.floor(Date.now() / 1000),
-              model: finalModel,
-              choices: [{ index: 0, delta: { content: `\n\n${blockMessage}` }, finish_reason: "content_filter" }],
-              anveguard: { blocked: true, reason: out.blockReason, layers: out.layers },
-            }));
+          // If already blocked mid-stream, bypass finally logging
+          if (!streamBlocked) {
+            // Run output policy on the accumulated text. If it blocks, emit a
+            // synthetic content_filter chunk so the client knows the answer was
+            // suppressed
+            const out = await evaluateOutput(assistantText, policyState, { systemPrompt, toolsRequested });
+            if (out.status === "blocked_output") {
+              controller.enqueue(sseEncode({
+                id: `chatcmpl-${crypto.randomUUID()}`,
+                object: "chat.completion.chunk",
+                created: Math.floor(Date.now() / 1000),
+                model: finalModel,
+                choices: [{ index: 0, delta: { content: `\n\n${blockMessage}` }, finish_reason: "content_filter" }],
+                anveguard: { blocked: true, reason: out.blockReason, layers: out.layers },
+              }));
+            }
+            controller.enqueue(SSE_DONE);
+            controller.close();
+
+            const promptTokens = finalUsage?.prompt_tokens ?? approximateTokens(promptText);
+            const completionTokens = finalUsage?.completion_tokens ?? approximateTokens(assistantText);
+            const costUsd = calculateEstimatedCost(finalModel, promptTokens, completionTokens);
+
+            await insertRequestLog(sb, {
+              ...logBase, model: finalModel,
+              status: streamFailure ? "error" : out.status,
+              block_reason: streamFailure ?? out.blockReason,
+              verdict: out.status === "blocked_output" ? "block" : "allow",
+              verdict_layers: out.layers,
+              response: { streamed: true, content: assistantText, ...(streamFailure ? { error: streamFailure } : {}) },
+              latency_ms: Date.now() - start,
+              tokens_in: promptTokens,
+              tokens_out: completionTokens,
+            }, settings);
+            
+            await incrementSpendsAtomic(sb, keyRow.id, costUsd, promptTokens + completionTokens);
           }
-          controller.enqueue(SSE_DONE);
-          controller.close();
-          await sb.from("request_logs").insert({
-            ...logBase, model: finalModel,
-            status: streamFailure ? "error" : out.status,
-            block_reason: streamFailure ?? out.blockReason,
-            verdict: out.status === "blocked_output" ? "block" : "allow",
-            verdict_layers: out.layers,
-            response: { streamed: true, content: assistantText, ...(streamFailure ? { error: streamFailure } : {}) },
-            latency_ms: Date.now() - start,
-            tokens_in: finalUsage?.prompt_tokens ?? null,
-            tokens_out: finalUsage?.completion_tokens ?? null,
-          });
-          await sb.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyRow.id);
         }
       },
       cancel(reason) {
@@ -1794,14 +2079,20 @@ async function handleRequest(req: Request): Promise<Response> {
     };
   }
 
-  await sb.from("request_logs").insert({
+  const promptTokens = data?.usage?.prompt_tokens ?? approximateTokens(promptText);
+  const completionTokens = data?.usage?.completion_tokens ?? approximateTokens(assistantText);
+  const costUsd = calculateEstimatedCost(data?.model || model, promptTokens, completionTokens);
+
+  await insertRequestLog(sb, {
     ...logBase, model: data?.model || model, status, block_reason: blockReason,
     verdict: status === "blocked_output" ? "block" : "allow",
     verdict_layers: outEval.layers,
     response: finalResponse, latency_ms: Date.now() - start,
-    tokens_in: data?.usage?.prompt_tokens ?? null,
-    tokens_out: data?.usage?.completion_tokens ?? null,
-  });
+    tokens_in: promptTokens,
+    tokens_out: completionTokens,
+  }, settings);
+
+  await incrementSpendsAtomic(sb, keyRow.id, costUsd, promptTokens + completionTokens);
   await sb.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyRow.id);
 
   return json(translateResponseFromOpenAI(reqShape, finalResponse), 200);

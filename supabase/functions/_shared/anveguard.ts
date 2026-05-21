@@ -404,3 +404,68 @@ export function checkPolicy(
   }
   return { blocked: false };
 }
+
+/**
+ * Create a proxied Supabase client that automatically scopes all queries for multi-tenant isolation.
+ * Intercepts:
+ *   - .from(table) calls for tenant-scoped tables.
+ *   - Automatically appends `.eq("user_id", tenantId)` to `.select()`, `.update()`, and `.delete()`.
+ *   - Automatically injects `user_id = tenantId` on `.insert()` and `.upsert()`.
+ */
+export function createTenantClient(sbClient: any, tenantId: string): any {
+  const scopedTables = [
+    "api_keys",
+    "endpoints",
+    "endpoint_shares",
+    "policies",
+    "policy_settings",
+    "policy_rules",
+    "policy_intents",
+    "request_logs",
+    "audit_logs",
+    "model_aliases",
+    "routes",
+    "route_steps"
+  ];
+
+  return new Proxy(sbClient, {
+    get(target, prop, receiver) {
+      if (prop === "from") {
+        return function (table: string) {
+          const builder = target.from(table);
+          if (!scopedTables.includes(table)) return builder;
+
+          return new Proxy(builder, {
+            get(builderTarget, builderProp, builderReceiver) {
+              if (builderProp === "insert" || builderProp === "upsert") {
+                return function (values: any, options: any) {
+                  if (Array.isArray(values)) {
+                    values.forEach((v) => {
+                      if (v && typeof v === "object") v.user_id = tenantId;
+                    });
+                  } else if (values && typeof values === "object") {
+                    values.user_id = tenantId;
+                  }
+                  const origMethod = Reflect.get(builderTarget, builderProp, builderReceiver);
+                  return origMethod.call(builderTarget, values, options);
+                };
+              }
+
+              if (builderProp === "select" || builderProp === "update" || builderProp === "delete") {
+                const origMethod = Reflect.get(builderTarget, builderProp, builderReceiver);
+                return function (...args: any[]) {
+                  const nextBuilder = origMethod.apply(builderTarget, args);
+                  return nextBuilder.eq("user_id", tenantId);
+                };
+              }
+
+              return Reflect.get(builderTarget, builderProp, builderReceiver);
+            },
+          });
+        };
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+}
+

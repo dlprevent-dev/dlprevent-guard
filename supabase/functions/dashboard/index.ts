@@ -1,7 +1,7 @@
 // AnveGuard dashboard API. Authenticates with a Clerk session JWT and exposes
 // CRUD for keys, policies, logs, and stats. Single function with action routing.
 import { dashboardCorsHeaders, applyDashboardCors, json, service, verifyClerkJwt, bearer, ensureProfile,
-  generateApiKey, sha256Hex, encryptString, decryptString, GLOBAL_DEFAULT_BLOCKED } from "../_shared/anveguard.ts";
+  generateApiKey, sha256Hex, encryptString, decryptString, GLOBAL_DEFAULT_BLOCKED, createTenantClient } from "../_shared/anveguard.ts";
 import { evaluate as evaluatePolicy, DEFAULT_SETTINGS, isSafeRegex, MAX_REGEX_PATTERN_LEN,
   type PolicyRule, type PolicyIntent, type PolicySettings } from "../_shared/policy_engine.ts";
 import { HARNESS_CASES, type ExpectedVerdict } from "../_shared/policy_test_corpus.ts";
@@ -165,7 +165,7 @@ Deno.serve(async (req) => {
     const url = new URL(req.url);
     const action = url.searchParams.get("action") || (await safeJson(req))?.action;
     const body = req.method === "POST" || req.method === "PUT" ? await safeJson(req) : {};
-    const sb = service();
+    const sb = createTenantClient(service(), userId);
 
     switch (action) {
       case "list_providers": {
@@ -315,7 +315,7 @@ Deno.serve(async (req) => {
 
       case "list_keys": {
         const { data } = await sb.from("api_keys")
-          .select("id,name,key_prefix,provider,model_default,is_active,is_admin,compression_mode,created_at,last_used_at,custom_base_url,custom_kind,endpoint_id")
+          .select("id,name,key_prefix,provider,model_default,is_active,is_admin,compression_mode,created_at,last_used_at,custom_base_url,custom_kind,endpoint_id,spend_limit_usd,current_spend_usd,token_limit,current_token_spend,limit_window,limit_reset_at")
           .eq("user_id", userId).order("created_at", { ascending: false });
         const keys = data ?? [];
         // Enrich custom-endpoint-bound keys with the endpoint name so the UI
@@ -465,14 +465,39 @@ Deno.serve(async (req) => {
       }
 
       case "create_key": {
-        const { name, provider, model, provider_key, custom, endpoint_id, is_admin } = body;
+        const { name, provider, model, provider_key, custom, endpoint_id, is_admin, spend_limit_usd, token_limit, limit_window } = body;
         const def = getProvider(provider);
         if (!name || !def) return json({ error: "Invalid provider" }, 400);
+
+        const spendLimitUsd = spend_limit_usd != null && spend_limit_usd !== "" ? Number(spend_limit_usd) : null;
+        const tokenLimit = token_limit != null && token_limit !== "" ? Math.floor(Number(token_limit)) : null;
+        const limitWin = ["infinite", "daily", "monthly"].includes(String(limit_window)) ? String(limit_window) : "infinite";
+        
+        let limitResetAt: string | null = null;
+        if (limitWin !== "infinite") {
+          const now = new Date();
+          let nextReset: Date | null = null;
+          if (limitWin === "daily") {
+            nextReset = new Date(now);
+            nextReset.setDate(nextReset.getDate() + 1);
+            nextReset.setHours(0, 0, 0, 0);
+          } else if (limitWin === "monthly") {
+            nextReset = new Date(now);
+            nextReset.setMonth(nextReset.getMonth() + 1);
+            nextReset.setDate(1);
+            nextReset.setHours(0, 0, 0, 0);
+          }
+          if (nextReset) limitResetAt = nextReset.toISOString();
+        }
 
         const insert: Record<string, unknown> = {
           user_id: userId, name, provider,
           model_default: model || def.default_model || "",
           is_admin: !!is_admin,
+          spend_limit_usd: spendLimitUsd,
+          token_limit: tokenLimit,
+          limit_window: limitWin,
+          limit_reset_at: limitResetAt,
         };
 
         if (provider === "custom") {
@@ -957,7 +982,7 @@ Deno.serve(async (req) => {
       // re-issued here; the ag_live_* secret is unchanged. Use
       // rotate_api_key for that.
       case "update_key": {
-        const { id, name: newName, model_default, provider: newProvider, provider_key, custom, endpoint_id } = body ?? {};
+        const { id, name: newName, model_default, provider: newProvider, provider_key, custom, endpoint_id, spend_limit_usd, token_limit, limit_window } = body ?? {};
         if (!id) return json({ error: "id required" }, 400);
         const { data: row } = await sb.from("api_keys").select("*")
           .eq("id", id).eq("user_id", userId).maybeSingle();
@@ -967,6 +992,35 @@ Deno.serve(async (req) => {
         const patch: Record<string, unknown> = {};
         if (typeof newName === "string" && newName.trim()) patch.name = newName.trim().slice(0, 120);
         if (typeof model_default === "string" && model_default.trim()) patch.model_default = model_default.trim();
+
+        if ("limit_window" in (body ?? {})) {
+          const limitWin = ["infinite", "daily", "monthly"].includes(String(limit_window)) ? String(limit_window) : "infinite";
+          patch.limit_window = limitWin;
+          
+          if (limitWin === "infinite") {
+            patch.limit_reset_at = null;
+          } else {
+            const now = new Date();
+            let nextReset: Date | null = null;
+            if (limitWin === "daily") {
+              nextReset = new Date(now);
+              nextReset.setDate(nextReset.getDate() + 1);
+              nextReset.setHours(0, 0, 0, 0);
+            } else if (limitWin === "monthly") {
+              nextReset = new Date(now);
+              nextReset.setMonth(nextReset.getMonth() + 1);
+              nextReset.setDate(1);
+              nextReset.setHours(0, 0, 0, 0);
+            }
+            patch.limit_reset_at = nextReset ? nextReset.toISOString() : null;
+          }
+        }
+        if ("spend_limit_usd" in (body ?? {})) {
+          patch.spend_limit_usd = spend_limit_usd != null && spend_limit_usd !== "" ? Number(spend_limit_usd) : null;
+        }
+        if ("token_limit" in (body ?? {})) {
+          patch.token_limit = token_limit != null && token_limit !== "" ? Math.floor(Number(token_limit)) : null;
+        }
 
         const changingProvider = typeof newProvider === "string" && newProvider !== row.provider;
         const changingKey = typeof provider_key === "string" && provider_key.length > 0;
@@ -1718,6 +1772,7 @@ Deno.serve(async (req) => {
           "enable_fuzzy_keywords", "enable_semantic_keywords",
           "allow_client_system_prompt",
           "enable_compression",
+          "enable_metadata_only_logs",
         ] as const;
         const patch: Record<string, unknown> = { user_id: userId };
         for (const k of allowedKeys) {

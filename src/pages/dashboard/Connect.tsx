@@ -16,6 +16,8 @@ import {
   Sparkles,
   Terminal,
   Trash2,
+  Coins,
+  TrendingUp,
   X,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -288,6 +290,12 @@ interface KeyRow {
   model_default: string;
   key_prefix: string;
   custom_base_url?: string | null;
+  spend_limit_usd?: number | null;
+  current_spend_usd?: number;
+  token_limit?: number | null;
+  current_token_spend?: number;
+  limit_window?: "infinite" | "daily" | "monthly";
+  limit_reset_at?: string | null;
 }
 
 type Step = 0 | 1 | 2 | 3;
@@ -311,6 +319,9 @@ const Connect = () => {
   const [name, setName] = useState("");
   const [model, setModel] = useState("");
   const [customBaseUrl, setCustomBaseUrl] = useState("");
+  const [spendLimitUsd, setSpendLimitUsd] = useState("");
+  const [tokenLimit, setTokenLimit] = useState("");
+  const [limitWindow, setLimitWindow] = useState<"infinite" | "daily" | "monthly">("infinite");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [created, setCreated] = useState<{ fullKey: string; id: string } | null>(null);
@@ -372,6 +383,9 @@ const Connect = () => {
   // unsaved edits don't bleed into the create flow if the user navigates).
   const [editName, setEditName] = useState("");
   const [editModel, setEditModel] = useState("");
+  const [editSpendLimitUsd, setEditSpendLimitUsd] = useState("");
+  const [editTokenLimit, setEditTokenLimit] = useState("");
+  const [editLimitWindow, setEditLimitWindow] = useState<"infinite" | "daily" | "monthly">("infinite");
   const [changeProviderOpen, setChangeProviderOpen] = useState(false);
   const [swapTile, setSwapTile] = useState<Tile | null>(null);
   const [swapKey, setSwapKey] = useState("");
@@ -384,8 +398,14 @@ const Connect = () => {
     if (editKeyId) {
       setEditName(name);
       setEditModel(model);
+      const k = existingKeys?.keys.find((row) => row.id === editKeyId);
+      if (k) {
+        setEditSpendLimitUsd(k.spend_limit_usd != null ? String(k.spend_limit_usd) : "");
+        setEditTokenLimit(k.token_limit != null ? String(k.token_limit) : "");
+        setEditLimitWindow(k.limit_window || "infinite");
+      }
     }
-  }, [editKeyId, name, model]);
+  }, [editKeyId, name, model, existingKeys]);
 
 
   // Aliases + endpoints attached to the current AnveGuard key. Refetched
@@ -502,6 +522,9 @@ const Connect = () => {
           model: model || tile?.defaultModel,
           provider_key: tile?.needsKey ? providerKey : undefined,
           custom: tile?.provider === "custom" ? customPayload : undefined,
+          spend_limit_usd: spendLimitUsd ? parseFloat(spendLimitUsd) : undefined,
+          token_limit: tokenLimit ? parseInt(tokenLimit, 10) : undefined,
+          limit_window: limitWindow,
         },
       }),
     onSuccess: (res, vars) => {
@@ -957,6 +980,60 @@ const Connect = () => {
               </p>
             </div>
 
+            {/* Glassmorphic Quota & Cost Control */}
+            <div className="space-y-4 rounded-xl border border-primary/10 bg-primary/[0.02] p-5 backdrop-blur-md hover:border-primary/20 transition-all shadow-[0_4px_20px_rgba(0,0,0,0.05)]">
+              <div className="flex items-center gap-2 border-b border-border/40 pb-2.5">
+                <Coins className="h-4 w-4 text-indigo-400" />
+                <h4 className="text-sm font-semibold tracking-wide text-foreground">Spend Limits & Quotas</h4>
+              </div>
+              <div className="grid sm:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="spendLimit" className="text-xs font-medium text-muted-foreground tracking-wider uppercase">Spend Limit (USD)</Label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm font-mono">$</span>
+                    <Input
+                      id="spendLimit"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={spendLimitUsd}
+                      onChange={(e) => setSpendLimitUsd(e.target.value)}
+                      placeholder="e.g. 50.00"
+                      className="pl-7 font-mono bg-background/50 border-border/80 focus:border-indigo-500/50 focus:ring-indigo-500/10"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="tokenLimit" className="text-xs font-medium text-muted-foreground tracking-wider uppercase">Token Budget</Label>
+                  <Input
+                    id="tokenLimit"
+                    type="number"
+                    min="0"
+                    value={tokenLimit}
+                    onChange={(e) => setTokenLimit(e.target.value)}
+                    placeholder="e.g. 10000000"
+                    className="font-mono bg-background/50 border-border/80 focus:border-indigo-500/50 focus:ring-indigo-500/10"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="limitWindow" className="text-xs font-medium text-muted-foreground tracking-wider uppercase">Renewal Window</Label>
+                  <Select value={limitWindow} onValueChange={(v: any) => setLimitWindow(v)}>
+                    <SelectTrigger id="limitWindow" className="bg-background/50 border-border/80 focus:border-indigo-500/50">
+                      <SelectValue placeholder="Renewal cycle" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="infinite">No auto-renewal</SelectItem>
+                      <SelectItem value="daily">Daily reset</SelectItem>
+                      <SelectItem value="monthly">Monthly reset</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <p className="text-meta text-muted-foreground font-sans">
+                Automatically rejects incoming LLM requests if thresholds are breached, preventing runaway API bills.
+              </p>
+            </div>
+
             {testResult && (
               <div
                 className={cn(
@@ -1027,10 +1104,10 @@ const Connect = () => {
           <CardContent className="space-y-5">
             {/* Edit-mode workspace settings ----------------------------- */}
             {editKeyId && (
-              <div className="rounded-md border border-border surface-1 p-4 space-y-4">
+              <div className="rounded-md border border-border surface-1 p-4 space-y-4 shadow-[0_4px_12px_rgba(0,0,0,0.02)]">
                 <div className="flex items-center gap-2">
                   <Pencil className="h-4 w-4 text-primary" />
-                  <span className="font-medium">Workspace settings</span>
+                  <span className="font-medium text-sm">Workspace settings</span>
                 </div>
                 <div className="grid sm:grid-cols-2 gap-3">
                   <div className="space-y-1.5">
@@ -1040,6 +1117,7 @@ const Connect = () => {
                       onChange={(e) => setEditName(e.target.value)}
                       placeholder="Workspace name"
                       maxLength={120}
+                      className="h-9 bg-background/50"
                     />
                   </div>
                   <div className="space-y-1.5">
@@ -1048,10 +1126,61 @@ const Connect = () => {
                       value={editModel}
                       onChange={(e) => setEditModel(e.target.value)}
                       placeholder="model id"
+                      className="h-9 bg-background/50"
                     />
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+
+                {/* Cost Controls */}
+                <div className="border-t border-border/30 pt-3 space-y-3">
+                  <div className="flex items-center gap-1.5">
+                    <Coins className="h-3.5 w-3.5 text-indigo-400" />
+                    <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Cost limits & renewal cycle</span>
+                  </div>
+                  <div className="grid sm:grid-cols-3 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-meta text-xs">Spend Limit (USD)</Label>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-xs font-mono">$</span>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={editSpendLimitUsd}
+                          onChange={(e) => setEditSpendLimitUsd(e.target.value)}
+                          placeholder="e.g. 50.00"
+                          className="pl-6 h-8 text-xs font-mono bg-background/40"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-meta text-xs">Token Budget</Label>
+                      <Input
+                        type="number"
+                        min="0"
+                        value={editTokenLimit}
+                        onChange={(e) => setEditTokenLimit(e.target.value)}
+                        placeholder="e.g. 10000000"
+                        className="h-8 text-xs font-mono bg-background/40"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-meta text-xs">Renewal Window</Label>
+                      <Select value={editLimitWindow} onValueChange={(v: any) => setEditLimitWindow(v)}>
+                        <SelectTrigger className="h-8 text-xs bg-background/40">
+                          <SelectValue placeholder="Renewal cycle" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="infinite">No auto-renewal</SelectItem>
+                          <SelectItem value="daily">Daily reset</SelectItem>
+                          <SelectItem value="monthly">Monthly reset</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 pt-1">
                   <Button
                     variant="outline"
                     size="sm"
@@ -1069,6 +1198,22 @@ const Connect = () => {
                       const patch: Record<string, unknown> = {};
                       if (editName.trim() && editName !== name) patch.name = editName.trim();
                       if (editModel.trim() && editModel !== model) patch.model_default = editModel.trim();
+                      
+                      const origKey = existingKeys?.keys.find((row) => row.id === editKeyId);
+                      const origSpend = origKey?.spend_limit_usd != null ? String(origKey.spend_limit_usd) : "";
+                      const origToken = origKey?.token_limit != null ? String(origKey.token_limit) : "";
+                      const origWindow = origKey?.limit_window || "infinite";
+
+                      if (editSpendLimitUsd !== origSpend) {
+                        patch.spend_limit_usd = editSpendLimitUsd === "" ? null : parseFloat(editSpendLimitUsd);
+                      }
+                      if (editTokenLimit !== origToken) {
+                        patch.token_limit = editTokenLimit === "" ? null : parseInt(editTokenLimit, 10);
+                      }
+                      if (editLimitWindow !== origWindow) {
+                        patch.limit_window = editLimitWindow;
+                      }
+
                       if (Object.keys(patch).length === 0) {
                         toast.info("No changes");
                         return;

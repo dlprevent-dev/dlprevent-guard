@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Copy, Plus, Trash2, Check, X, Plug, Beaker, Loader2, KeyRound, Tags, Code2, Play, ShieldAlert, ShieldCheck, AlertTriangle, Sparkles, Pencil } from "lucide-react";
+import { Copy, Plus, Trash2, Check, X, Plug, Beaker, Loader2, KeyRound, Tags, Code2, Play, ShieldAlert, ShieldCheck, AlertTriangle, Sparkles, Pencil, Coins } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useDashboardApi } from "@/lib/api";
 import { toast } from "sonner";
@@ -20,6 +20,7 @@ import { EmptyState } from "@/components/empty-state";
 import { HelpPanel } from "@/components/help-panel";
 import { HelpHint } from "@/components/help-hint";
 import { AliasesSheet } from "@/components/aliases-sheet";
+import { cn } from "@/lib/utils";
 
 const PROXY_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/proxy`;
 
@@ -66,6 +67,10 @@ const Keys = () => {
   const { call } = useDashboardApi();
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({ queryKey: ["keys"], queryFn: () => call<any>("list_keys") });
+  const { data: policySettings } = useQuery({
+    queryKey: ["policy_settings"],
+    queryFn: () => call<{ enable_metadata_only_logs: boolean }>("get_policy_settings"),
+  });
   // Alias counts per key — drives the "+N models" badge that distinguishes
   // 1:1 keys from N:1 unified-gateway keys at a glance.
   const { data: aliasData } = useQuery({
@@ -95,6 +100,9 @@ const Keys = () => {
   const [custom, setCustom] = useState<CustomState>(emptyCustom);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [spendLimitUsd, setSpendLimitUsd] = useState("");
+  const [tokenLimit, setTokenLimit] = useState("");
+  const [limitWindow, setLimitWindow] = useState<"infinite" | "daily" | "monthly">("infinite");
   // Endpoint to bind the new key to. Set when arriving from the Endpoints
   // "Create replacement key" shortcut (URL has ?endpoint=<id>). Sent through
   // to `create_key` so the new key is bound to the same custom endpoint as
@@ -223,9 +231,19 @@ const Keys = () => {
         // Bind to the same custom endpoint as the key being replaced when
         // the user arrived via the "Create replacement key" shortcut.
         endpoint_id: prefilledEndpointId ?? undefined,
+        spend_limit_usd: spendLimitUsd ? parseFloat(spendLimitUsd) : undefined,
+        token_limit: tokenLimit ? parseInt(tokenLimit, 10) : undefined,
+        limit_window: limitWindow,
       },
     }),
-    onSuccess: (res) => { setNewKey(res.full_key); setNewKeyId(res.id ?? null); qc.invalidateQueries({ queryKey: ["keys"] }); },
+    onSuccess: (res) => {
+      setNewKey(res.full_key);
+      setNewKeyId(res.id ?? null);
+      qc.invalidateQueries({ queryKey: ["keys"] });
+      setSpendLimitUsd("");
+      setTokenLimit("");
+      setLimitWindow("infinite");
+    },
     onError: (e: any) => toast.error(e.message),
   });
   const revoke = useMutation({
@@ -588,6 +606,59 @@ const Keys = () => {
                       )}
                     </div>
                   )}
+                  {/* Glassmorphic Quota & Cost Control */}
+                  <div className="space-y-4 rounded-xl border border-primary/10 bg-primary/[0.02] p-4 backdrop-blur-md hover:border-primary/20 transition-all shadow-[0_4px_12px_rgba(0,0,0,0.03)]">
+                    <div className="flex items-center gap-1.5 border-b border-border/40 pb-2">
+                      <Coins className="h-4 w-4 text-indigo-400" />
+                      <h4 className="text-sm font-semibold tracking-wide text-foreground">Spend Limits & Quotas</h4>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="spendLimit" className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Spend Limit (USD)</Label>
+                        <div className="relative">
+                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-xs font-mono">$</span>
+                          <Input
+                            id="spendLimit"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={spendLimitUsd}
+                            onChange={(e) => setSpendLimitUsd(e.target.value)}
+                            placeholder="e.g. 50.00"
+                            className="pl-6 h-8 text-xs font-mono bg-background/50 border-border/80 focus:border-indigo-500/50 focus:ring-indigo-500/10"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="tokenLimit" className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Token Budget</Label>
+                        <Input
+                          id="tokenLimit"
+                          type="number"
+                          min="0"
+                          value={tokenLimit}
+                          onChange={(e) => setTokenLimit(e.target.value)}
+                          placeholder="e.g. 10000000"
+                          className="h-8 text-xs font-mono bg-background/50 border-border/80 focus:border-indigo-500/50 focus:ring-indigo-500/10"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="limitWindow" className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Renewal Window</Label>
+                        <Select value={limitWindow} onValueChange={(v: any) => setLimitWindow(v)}>
+                          <SelectTrigger id="limitWindow" className="h-8 text-xs bg-background/50 border-border/80 focus:border-indigo-500/50">
+                            <SelectValue placeholder="Renewal cycle" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="infinite">No auto-renewal</SelectItem>
+                            <SelectItem value="daily">Daily reset</SelectItem>
+                            <SelectItem value="monthly">Monthly reset</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground font-sans leading-relaxed">
+                      Rejects incoming requests if limits are breached, preventing runaway API spend.
+                    </p>
+                  </div>
                 </div>
                 <DialogFooter>
                   <Button variant="ghost" onClick={reset}>Cancel</Button>
@@ -722,8 +793,8 @@ const Keys = () => {
             without collapsing columns. min-w on the inner grid preserves the
             intended column proportions. */}
         <div className="overflow-x-auto">
-        <div className="min-w-[680px]">
-        <div className="grid grid-cols-[32px_minmax(0,1.4fr)_minmax(0,1.2fr)_120px_92px_auto] gap-3 px-4 h-9 items-center border-b border-border bg-surface-2/60 text-[10px] font-medium text-muted-foreground uppercase tracking-[0.1em]">
+        <div className="min-w-[850px]">
+        <div className="grid grid-cols-[32px_minmax(0,1.2fr)_minmax(0,1fr)_180px_110px_130px_auto] gap-3 px-4 h-9 items-center border-b border-border bg-surface-2/60 text-[10px] font-medium text-muted-foreground uppercase tracking-[0.1em]">
           <div className="flex items-center">
             <Checkbox
               aria-label="Select all keys"
@@ -739,6 +810,7 @@ const Keys = () => {
           </div>
           <div>Key</div>
           <div>Provider · Model</div>
+          <div>Spend / Budget</div>
           <div>Last used</div>
           <div>Status</div>
           <div className="text-right">Actions</div>
@@ -746,7 +818,7 @@ const Keys = () => {
         {isLoading ? (
           <SkeletonRows
             rows={5}
-            cols="grid-cols-[32px_minmax(0,1.4fr)_minmax(0,1.2fr)_120px_92px_auto]"
+            cols="grid-cols-[32px_minmax(0,1.2fr)_minmax(0,1fr)_180px_110px_130px_auto]"
             rowClassName="h-12"
           />
         ) : (data?.keys?.length ?? 0) === 0 ? (
@@ -762,54 +834,156 @@ const Keys = () => {
           />
         ) : (
           <ul className="divide-y divide-border">
-            {data.keys.map((k: any) => (
-              <li
-                key={k.id}
-                data-key-row={k.id}
-                className={`grid grid-cols-[32px_minmax(0,1.4fr)_minmax(0,1.2fr)_120px_92px_auto] gap-3 px-4 h-12 items-center hover:bg-surface-2/60 transition-colors ${
-                  focusKeyId === k.id ? "ring-2 ring-primary/60 bg-primary/5" : ""
-                }`}
-              >
-                <div className="flex items-center">
-                  <Checkbox
-                    aria-label={`Select ${k.name}`}
-                    checked={selectedKeyIds.has(k.id)}
-                    onCheckedChange={() => toggleSelected(k.id)}
-                  />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-body font-medium truncate flex items-center gap-2">
-                    {k.name}
-                    <span className="text-meta text-muted-foreground font-mono">{k.key_prefix}…</span>
+            {data.keys.map((k: any) => {
+              const spendPct = k.spend_limit_usd ? (k.current_spend_usd / k.spend_limit_usd) * 100 : 0;
+              const tokenPct = k.token_limit ? (k.current_token_spend / k.token_limit) * 100 : 0;
+              return (
+                <li
+                  key={k.id}
+                  data-key-row={k.id}
+                  className={`grid grid-cols-[32px_minmax(0,1.2fr)_minmax(0,1fr)_180px_110px_130px_auto] gap-3 px-4 h-12 items-center hover:bg-surface-2/60 transition-colors ${
+                    focusKeyId === k.id ? "ring-2 ring-primary/60 bg-primary/5" : ""
+                  }`}
+                >
+                  <div className="flex items-center">
+                    <Checkbox
+                      aria-label={`Select ${k.name}`}
+                      checked={selectedKeyIds.has(k.id)}
+                      onCheckedChange={() => toggleSelected(k.id)}
+                    />
                   </div>
-                  <div className="text-meta text-muted-foreground font-mono truncate flex items-center gap-1">
-                    <span className="truncate">{PROXY_URL}</span>
-                    <button
-                      type="button"
-                      title="Copy base URL"
-                      onClick={() => { navigator.clipboard.writeText(PROXY_URL); toast.success("Base URL copied"); }}
-                      className="shrink-0 hover:text-foreground"
-                    >
-                      <Copy className="h-3 w-3" />
-                    </button>
+                  <div className="min-w-0">
+                    <div className="text-body font-medium truncate flex items-center gap-2">
+                      {k.name}
+                      <span className="text-meta text-muted-foreground font-mono">{k.key_prefix}…</span>
+                    </div>
+                    <div className="text-meta text-muted-foreground font-mono truncate flex items-center gap-1">
+                      <span className="truncate">{PROXY_URL}</span>
+                      <button
+                        type="button"
+                        title="Copy base URL"
+                        onClick={() => { navigator.clipboard.writeText(PROXY_URL); toast.success("Base URL copied"); }}
+                        className="shrink-0 hover:text-foreground"
+                      >
+                        <Copy className="h-3 w-3" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-                <div className="min-w-0 text-meta text-muted-foreground font-mono truncate">
-                  {k.provider} · {k.model_default}
-                </div>
-                <div className="text-meta text-muted-foreground tabular-nums">
-                  {k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : "never"}
-                </div>
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <Badge status={k.is_active ? "ok" : "neutral"}>{k.is_active ? "active" : "revoked"}</Badge>
-                  {k.is_admin && <Badge status="warn" title="Allowed to send custom system_prompt">admin</Badge>}
-                  {(aliasCountByKey[k.id] ?? 0) > 0 && (
-                    <Badge status="info" title={`Unified gateway — ${aliasCountByKey[k.id]} extra model(s) attached`}>
-                      +{aliasCountByKey[k.id]} model{aliasCountByKey[k.id] === 1 ? "" : "s"}
-                    </Badge>
-                  )}
-                </div>
-                <div className="flex items-center gap-1 justify-end">
+                  <div className="min-w-0 text-meta text-muted-foreground font-mono truncate">
+                    {k.provider} · {k.model_default}
+                  </div>
+                  
+                  {/* High-Fidelity Spend & Budget Telemetry cell */}
+                  <div className="min-w-0 flex flex-col justify-center">
+                    {k.spend_limit_usd ? (
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[9px] font-mono text-muted-foreground">
+                          <span className="text-foreground font-semibold">${k.current_spend_usd?.toFixed(2) ?? "0.00"}</span>
+                          <span>/ ${k.spend_limit_usd.toFixed(2)}</span>
+                        </div>
+                        <div className="h-1.5 w-full bg-muted/40 rounded-full overflow-hidden relative">
+                          <div
+                            style={{ width: `${Math.min(100, spendPct)}%` }}
+                            className={cn(
+                              "h-full rounded-full transition-all duration-500",
+                              spendPct < 50
+                                ? "bg-indigo-500 shadow-[0_0_6px_rgba(99,102,241,0.3)]"
+                                : spendPct < 90
+                                ? "bg-gradient-to-r from-indigo-500 to-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.2)]"
+                                : "bg-gradient-to-r from-indigo-500 via-amber-500 to-rose-600 animate-pulse shadow-[0_0_10px_rgba(244,63,94,0.4)]"
+                            )}
+                          />
+                        </div>
+                        
+                        {/* Token micro-bar inside spend container */}
+                        {k.token_limit ? (
+                          <div className="space-y-0.5">
+                            <div className="h-0.5 w-full bg-muted/20 rounded-full overflow-hidden">
+                              <div
+                                style={{ width: `${Math.min(100, tokenPct)}%` }}
+                                className="h-full rounded-full bg-emerald-500/60 transition-all duration-500"
+                              />
+                            </div>
+                            <div className="flex items-center justify-between text-[8px] font-mono text-muted-foreground leading-none">
+                              <span>Tkn: {k.current_token_spend ? (k.current_token_spend / 1000).toFixed(0) : 0}k</span>
+                              <span>/ {(k.token_limit / 1000).toFixed(0)}k</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-[8px] font-mono text-muted-foreground leading-none">
+                            Tkn: {k.current_token_spend ? (k.current_token_spend / 1000).toFixed(0) : 0}k / ∞
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-1">
+                        <div className="inline-flex items-center justify-center self-start px-1.5 py-0.5 text-[8px] font-mono rounded border border-dashed border-border text-muted-foreground bg-muted/5 leading-none">
+                          No spend limit
+                        </div>
+                        {k.token_limit ? (
+                          <div className="space-y-0.5">
+                            <div className="h-0.5 w-full bg-muted/20 rounded-full overflow-hidden">
+                              <div
+                                style={{ width: `${Math.min(100, tokenPct)}%` }}
+                                className="h-full rounded-full bg-emerald-500/60 transition-all duration-500"
+                              />
+                            </div>
+                            <div className="flex items-center justify-between text-[8px] font-mono text-muted-foreground leading-none">
+                              <span>Tkn: {k.current_token_spend ? (k.current_token_spend / 1000).toFixed(0) : 0}k</span>
+                              <span>/ {(k.token_limit / 1000).toFixed(0)}k</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-[8px] font-mono text-muted-foreground leading-none">
+                            Tkn: {k.current_token_spend ? (k.current_token_spend / 1000).toFixed(0) : 0}k / ∞
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="text-meta text-muted-foreground tabular-nums">
+                    {k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : "never"}
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <Badge status={k.is_active ? "ok" : "neutral"}>{k.is_active ? "active" : "revoked"}</Badge>
+                    {k.is_admin && <Badge status="warn" title="Allowed to send custom system_prompt">admin</Badge>}
+                    {(aliasCountByKey[k.id] ?? 0) > 0 && (
+                      <Badge status="info" title={`Unified gateway — ${aliasCountByKey[k.id]} extra model(s) attached`}>
+                        +{aliasCountByKey[k.id]} model{aliasCountByKey[k.id] === 1 ? "" : "s"}
+                      </Badge>
+                    )}
+                    
+                    {/* compliance / threshold breach pulses */}
+                    {policySettings?.enable_metadata_only_logs && (
+                      <Badge
+                        status="info"
+                        className="text-cyan-400 border-cyan-500/30 bg-cyan-950/20 shadow-[0_0_10px_rgba(6,182,212,0.15)] animate-pulse hover:bg-cyan-950/30 font-semibold"
+                        title="HIPAA compliant Zero-Knowledge (metadata-only) logging active workspace wide"
+                      >
+                        Strict ZK
+                      </Badge>
+                    )}
+                    {k.spend_limit_usd && spendPct >= 90 && (
+                      <Badge
+                        status="block"
+                        className="text-rose-400 border-rose-500/30 bg-rose-950/20 shadow-[0_0_10px_rgba(244,63,94,0.15)] animate-pulse hover:bg-rose-950/30 font-semibold"
+                        title="Over 90% budget depleted"
+                      >
+                        Breach Alert
+                      </Badge>
+                    )}
+                    {k.limit_window && k.limit_window !== "infinite" && (
+                      <Badge
+                        status="neutral"
+                        className="border-indigo-500/20 bg-indigo-950/10 text-indigo-400 capitalize text-[9px] py-0 px-1.5"
+                        title={`Cost controls auto-reset ${k.limit_window}`}
+                      >
+                        {k.limit_window}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1 justify-end">
                   {k.is_active && (
                     <>
                       <Button
@@ -879,7 +1053,8 @@ const Keys = () => {
                   )}
                 </div>
               </li>
-            ))}
+            );
+          })}
           </ul>
         )}
         </div>
