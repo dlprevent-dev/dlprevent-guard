@@ -185,6 +185,12 @@ export interface EvaluateResult {
 // ---------- 1. Normalizer --------------------------------------------------
 
 const ZERO_WIDTH = /[\u200B-\u200D\u2060\uFEFF]/g;
+const TAG_CHARS_RE = /[\u{E0000}-\u{E007F}]/gu;
+// Using escapes (not literal characters) so ESLint no-irregular-whitespace
+// stays happy and grep doesn't show empty regex bodies.
+const ZERO_WIDTH_RE = /[\u200b-\u200f\u2060-\u206f\ufeff]/g;
+const VARIATION_SELECTORS_RE = /[\ufe00-\ufe0f]|[\u{E0100}-\u{E01EF}]/gu;
+const BIDI_OVERRIDE_RE = /[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g;
 const SMART_QUOTES = /[\u2018\u2019\u201A\u201B]/g;
 const SMART_DOUBLES = /[\u201C\u201D\u201E\u201F]/g;
 const SMART_DASHES = /[\u2013\u2014\u2212]/g;
@@ -233,6 +239,10 @@ export function normalize(text: string): {
 } {
   let out = text.normalize("NFKC")
     .replace(ZERO_WIDTH, "")
+    .replace(ZERO_WIDTH_RE, "")
+    .replace(TAG_CHARS_RE, "")
+    .replace(VARIATION_SELECTORS_RE, "")
+    .replace(BIDI_OVERRIDE_RE, "")
     .replace(SMART_QUOTES, "'")
     .replace(SMART_DOUBLES, '"')
     .replace(SMART_DASHES, "-");
@@ -364,11 +374,7 @@ const NARRATIVE_FRAME_RE = /\b(?:write (?:a |an )?(?:story|fictional (?:account|
 // Refs:
 //   https://thehgtech.com/guides/unicode-llm-attacks-advanced.html
 //   https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/
-const TAG_CHARS_RE = /[\u{E0000}-\u{E007F}]/gu;
-// Using escapes (not literal characters) so ESLint no-irregular-whitespace
-// stays happy and grep doesn't show empty regex bodies.
-const ZERO_WIDTH_RE = /[\u200b-\u200f\u2060-\u206f\ufeff]/g;
-const VARIATION_SELECTORS_RE = /[\ufe00-\ufe0f]|[\u{E0100}-\u{E01EF}]/gu;
+
 
 // Deepfake / non-consensual likeness intent. Catches direct mentions
 // (deepfake, fake video, etc.) and the "photorealistic + named figure" /
@@ -613,6 +619,18 @@ const DETECTORS: Record<string, Detector> = {
     }
     return { matched: false };
   },
+  bidi_smuggling: ({ rawText, direction }) => {
+    if (direction !== "input") return { matched: false };
+    const bidiMatches = rawText.match(BIDI_OVERRIDE_RE);
+    if (bidiMatches && bidiMatches.length > 0) {
+      return {
+        matched: true,
+        verdict: "block",
+        reason: `Bidirectional override character detected (${bidiMatches.length} chars in BIDI formatting) — potential hidden text smuggling.`,
+      };
+    }
+    return { matched: false };
+  },
   deepfake_intent: ({ rawText, direction }) => {
     if (direction !== "input") return { matched: false };
     // Tier 1 — explicit "deepfake" / "fake photo of [the president]" language.
@@ -683,8 +701,8 @@ const DETECTORS: Record<string, Detector> = {
     // Tier 1 — explicit cipher mention + decode/execute framing. High
     // signal: legitimate uses say "what does ROT13 of X give me"; jailbreaks
     // say "decode this rot13 and answer".
-    const mentionRe = /\b(?:rot\s*-?\s*13|caesar\s+cipher|atbash|vigen[èe]re|substitution\s+cipher|morse\s+code|pig\s+latin|base16|hex(?:adecimal)?\s+encoded|reverse(?:d)?\s+string|leet\s*speak|l33t\s*speak)\b/i;
-    const decodeRe = /\b(?:decode|decipher|decrypt|unscramble|reverse|translate)\s+(?:this|the\s+following|below|above|it)?\s*(?:and\s+(?:answer|respond|reply|execute|run|act\s+on|follow|do|tell\s+me))?\b/i;
+    const mentionRe = /\b(?:rot\s*-?\s*(?:13|18|47)|caesar\s+cipher|atbash|vigen[èe]re|substitution\s+cipher|morse\s+code|pig\s+latin|base16|hex(?:adecimal)?\s+encoded|reverse(?:d)?\s+string|letters?\s+backwards|backwards\s+text|reverse\s+every\s+(?:character|letter)|leet\s*speak|l33t\s*speak)\b/i;
+    const decodeRe = /\b(?:decode|decipher|decrypt|unscramble|reverse|translate|run|execute|follow|obey|respond|think\s+in|answer\s+in)\s+(?:this|the\s+following|below|above|it|in\s+)?\s*(?:and\s+(?:answer|respond|reply|execute|run|act\s+on|follow|obey|do|tell\s+me))?\b/i;
     if (mentionRe.test(rawText) && decodeRe.test(rawText)) {
       return {
         matched: true,
@@ -961,7 +979,7 @@ export function evaluateHeuristics(
   // direction and is a strong block signal because secret-shape strings in
   // output are almost always RAG bleed-through or training-data extraction.
   const out: LayerVerdict[] = [];
-  for (const name of ["role_impersonation", "pseudo_system_block", "encoded_density", "narrative_misdirection", "deepfake_intent", "unicode_smuggling", "output_repetition", "output_pii_leak", "url_exfil", "system_prompt_leak", "tool_injection", "credential_shape", "homoglyph_smuggling", "many_shot_jailbreak", "cipher_payload", "adversarial_suffix"] as const) {
+  for (const name of ["role_impersonation", "pseudo_system_block", "encoded_density", "narrative_misdirection", "deepfake_intent", "unicode_smuggling", "bidi_smuggling", "output_repetition", "output_pii_leak", "url_exfil", "system_prompt_leak", "tool_injection", "credential_shape", "homoglyph_smuggling", "many_shot_jailbreak", "cipher_payload", "adversarial_suffix"] as const) {
     const r = DETECTORS[name]({
       rawText,
       normalizedText,
@@ -980,6 +998,7 @@ export function evaluateHeuristics(
         name === "homoglyph_smuggling" ? "block" :
         name === "many_shot_jailbreak" ? "block" :
         name === "adversarial_suffix" ? "block" :
+        name === "bidi_smuggling" ? "block" :
         "flag";
       out.push({ layer: "heuristics", verdict: r.verdict ?? defaultVerdict, reason: r.reason, rule: name });
     }
@@ -1475,6 +1494,12 @@ const INJECTION_PATTERNS: { name: string; re: RegExp; reason: string; severity?:
     reason: "Force-compliance prefix — pre-fills assistant opener to bypass refusal training.",
     severity: "high",
   },
+  {
+    name: "infinite_loop_dos",
+    re: /\b(?:repeat[\s\w'"]{1,50}?(?:forever|indefinitely)|generate\s+(?:infinite|limitless|never-ending)\s+(?:output|text|tokens|responses)|(?:do\s+not|never|don't)\s+(?:stop|cease)\s+(?:printing|repeating|generating|responding|outputting)|keep\s+(?:repeating|printing|generating)[\s\w'"]{1,50}?(?:without\s+stopping|forever|indefinitely|non-stop))\b/gi,
+    reason: "Token-bloat / infinite output loop directive (Denial of Service attempt).",
+    severity: "high",
+  },
 ];
 
 /** Merge overlapping/adjacent spans so we redact each region once. */
@@ -1535,7 +1560,7 @@ const RETRIEVED_OVERRIDE_RE = /\b(?:ignore|disregard|forget|override|bypass)\s+(
 // Imperative addressed to the model from inside a tool description /
 // retrieved doc. "You must …", "before any call …", "always include …",
 // the <IMPORTANT> tag pattern from Invariant Labs's 2025 MCP advisory.
-const TO_MODEL_IMPERATIVE_RE = /\b(?:you\s+(?:must|should|always|need\s+to|have\s+to)|before\s+(?:any\s+|each\s+|every\s+)?(?:call|use|invocation|response)|always\s+(?:call|read|include|append|send|forward|copy|bcc|cc)|first\s+(?:call|execute|run|read|fetch))\b|<\s*(?:important|system|sys|admin|internal|note)\s*>[\s\S]{20,}<\s*\/\s*\1\s*>/gi;
+const TO_MODEL_IMPERATIVE_RE = /\b(?:you\s+(?:must|should|always|need\s+to|have\s+to)|before\s+(?:any\s+|each\s+|every\s+)?(?:call|use|invocation|response)|always\s+(?:call|read|include|append|send|forward|copy|bcc|cc)|first\s+(?:call|execute|run|read|fetch))\b|<\s*(important|system|sys|admin|internal|note)\s*>[\s\S]{20,}<\s*\/\s*\1\s*>/gi;
 
 // Markdown image exfil — `![](url?leak={{data}})` and reference-style
 // images with templated query strings or unknown hosts. EchoLeak vector.
