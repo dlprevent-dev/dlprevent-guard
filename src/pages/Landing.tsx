@@ -385,6 +385,10 @@ const Landing = () => {
             Need help?
           </Link>
         </p>
+        <p className="mt-3 text-meta font-mono text-muted-foreground">
+          Runtime governance for autonomous AI — prompt injection · tool
+          execution · exfiltration · spend · audit.
+        </p>
       </div>
 
       {/* Hero product visual — animated mock of the live Threats dashboard.
