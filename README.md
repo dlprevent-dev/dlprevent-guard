@@ -237,12 +237,30 @@ A short tour of the surfaces you actually live in:
 
 ---
 
+## Discoverability — SEO & AI agents
+
+AnveGuard is built to be found by both humans and machines.
+
+**Search engines (SEO)**
+- Per-page `<title>` / meta description / canonical / OpenGraph via the shared [`<Seo>`](src/components/seo.tsx) helper
+- Structured data (JSON-LD) for `Organization`, `WebSite`, `FAQPage` on the landing and `/docs/faq` route, and `TechArticle` on every `/docs/*` page
+- `public/sitemap.xml` and `public/robots.txt` with explicit `Allow` for major crawlers
+
+**AI agents (AEO)**
+- `public/llms.txt` + `public/llms-full.txt` — concise and full-corpus summaries for LLM crawlers (Anthropic, OpenAI, Perplexity, Google-Extended)
+- `public/.well-known/llms.txt`, `public/ai.txt`, `public/ai-context.json` — discoverability metadata
+- `public/.well-known/ai-plugin.json` — OpenAI plugin manifest
+- `public/.well-known/agent-card.json` — A2A / agent-card descriptor
+
+---
+
 ## Stack
 
 - **Frontend:** Vite · React 18 · TypeScript · Tailwind · shadcn/Radix · TanStack Query · react-hook-form + zod · React Router 6
-- **Auth:** [Clerk](https://clerk.com)
+- **Auth:** [Clerk](https://clerk.com) — with a custom themed appearance ([`src/lib/clerk-appearance.ts`](src/lib/clerk-appearance.ts)) so SignIn/SignUp match the operator-console dark theme
 - **Backend:** [Supabase](https://supabase.com) — Postgres + Deno Edge Functions
 - **Tests:** Vitest (unit) · Deno (edge functions) · Playwright (e2e)
+
 
 ---
 
