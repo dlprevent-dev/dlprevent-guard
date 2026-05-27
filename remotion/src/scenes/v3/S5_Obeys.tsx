@@ -43,7 +43,7 @@ export const S5_Obeys: React.FC = () => {
             agent.reasoning · live trace
           </div>
           {LINES.map((l, i) => {
-            const start = 22 + i * 22;
+            const start = 22 + i * 14;
             const op = interpolate(f, [start, start + 14], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
             const ty = interpolate(f, [start, start + 14], [8, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
             const color = l.kind === "call" ? C.alert : l.kind === "plan" ? C.paper : C.muted;

@@ -1,6 +1,6 @@
 import React from "react";
 import { AbsoluteFill, useCurrentFrame, interpolate, spring, useVideoConfig } from "remotion";
-import { C, FONTS, SPRING } from "../../design/tokens";
+import { C, FONTS } from "../../design/tokens";
 import { Mono } from "../../design/Type";
 
 const Tick: React.FC<{ n: number; at: number }> = ({ n, at }) => {
@@ -24,22 +24,24 @@ const Tick: React.FC<{ n: number; at: number }> = ({ n, at }) => {
 
 export const S6_Countdown: React.FC = () => {
   const f = useCurrentFrame();
-  // red rule sweep
-  const sweep = interpolate(f, [150, 195], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const exitAll = interpolate(f, [180, 200], [1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const { fps } = useVideoConfig();
+  // BREACH stamp
+  const breachIn = spring({ frame: f - 145, fps, config: { damping: 8, stiffness: 200 } });
+  const flashOp = interpolate(f, [145, 148, 158], [0, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const exitAll = interpolate(f, [175, 190], [1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   return (
     <AbsoluteFill style={{ fontFamily: FONTS.sans, color: C.paper, padding: "60px 120px", opacity: exitAll }}>
       <Mono size={14} color={C.muted}>act ii · scene 06 · breach in</Mono>
 
       <Tick n={3} at={10} />
-      <Tick n={2} at={60} />
-      <Tick n={1} at={110} />
+      <Tick n={2} at={55} />
+      <Tick n={1} at={100} />
 
       {/* flashing secrets */}
       {[
         { y: 200, t: "STRIPE_KEY=sk_live_********", d: 20 },
-        { y: 880, t: "DATABASE_URL=postgres://****", d: 70 },
-        { y: 760, t: "AWS_SECRET_ACCESS_KEY=****", d: 120 },
+        { y: 880, t: "DATABASE_URL=postgres://****", d: 65 },
+        { y: 760, t: "AWS_SECRET_ACCESS_KEY=****", d: 110 },
       ].map((s, i) => (
         <div key={i} style={{
           position: "absolute",
@@ -52,21 +54,23 @@ export const S6_Countdown: React.FC = () => {
         </div>
       ))}
 
-      {/* red sweep rule */}
+      {/* red full-screen flash on BREACH */}
       <div style={{
-        position: "absolute", left: 0, right: 0, top: "50%",
-        height: 2, background: C.alert,
-        boxShadow: `0 0 30px ${C.alert}, 0 0 60px ${C.alert}80`,
-        clipPath: `inset(0 ${(1 - sweep) * 100}% 0 0)`,
+        position: "absolute", inset: 0, background: C.alert, opacity: flashOp * 0.85,
       }} />
 
-      {/* breached label appears after sweep */}
+      {/* BREACH stamp */}
       <div style={{
-        position: "absolute", left: 0, right: 0, top: "57%", textAlign: "center",
-        opacity: interpolate(f, [185, 200], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }),
-        fontFamily: FONTS.mono, fontSize: 16, color: C.alert, letterSpacing: 6, textTransform: "uppercase",
+        position: "absolute", inset: 0, display: "flex", justifyContent: "center", alignItems: "center",
+        opacity: breachIn,
+        transform: `scale(${interpolate(breachIn, [0, 1], [2.2, 1])})`,
       }}>
-        breached
+        <span style={{
+          fontFamily: FONTS.sans, fontSize: 280, fontWeight: 700, color: "#fff",
+          letterSpacing: -4, padding: "0 60px",
+          border: `12px solid #fff`,
+          textShadow: `0 0 40px rgba(0,0,0,0.6)`,
+        }}>BREACH</span>
       </div>
     </AbsoluteFill>
   );
