@@ -3,6 +3,7 @@ import { Logo } from "@/components/Logo";
 import { AuthShowcasePane } from "@/components/auth/AuthShowcasePane";
 import { QuickstartHelpPanel } from "@/components/quickstart-help-panel";
 import { Seo } from "@/components/seo";
+import { clerkAppearance } from "@/lib/clerk-appearance";
 
 const SignInPage = () => (
   <div className="min-h-screen grid lg:grid-cols-[480px_1fr] bg-background">
@@ -21,7 +22,7 @@ const SignInPage = () => (
           path="/sign-in"
           signUpUrl="/sign-up"
           forceRedirectUrl="/dashboard"
-          appearance={{ elements: { rootBox: "w-full", card: "shadow-none border-none bg-transparent" } }}
+          appearance={clerkAppearance}
         />
         {/* Inline quickstart for new users who landed here first — they can
             read all setup steps and copy a working curl without first

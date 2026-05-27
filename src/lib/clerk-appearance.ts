@@ -1,4 +1,5 @@
-import type { Appearance } from "@clerk/types";
+// Clerk appearance config — typed loosely so we don't depend on @clerk/types.
+type Appearance = Record<string, unknown>;
 
 /**
  * Shared Clerk appearance for SignIn/SignUp.
