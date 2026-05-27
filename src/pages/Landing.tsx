@@ -465,6 +465,193 @@ const Landing = () => {
       </div>
     </section>
 
+    {/* --------------------- End-to-end request pipeline -------------------- */}
+    {/* The "killer diagram" — every stage a request passes through, in one
+        glance. Non-security founders should grok this in 5 seconds. */}
+    <section id="pipeline" className="border-b border-border">
+      <div className="mx-auto max-w-6xl px-4 md:px-6 py-16 lg:py-20">
+        <div className="max-w-2xl mx-auto text-center">
+          <div className="text-meta uppercase tracking-[0.18em] text-primary font-mono">
+            The pipeline
+          </div>
+          <h2 className="mt-2 text-display font-semibold tracking-tight">
+            Every request, every stage, every time.
+          </h2>
+          <p className="mt-3 text-body text-muted-foreground leading-relaxed">
+            One pipeline runs in front of every model and every tool call. Each
+            stage is independently configurable — and independently auditable.
+          </p>
+        </div>
+
+        <ol className="mt-10 max-w-md mx-auto space-y-2">
+          {PIPELINE.map((p, i) => (
+            <li key={p.label}>
+              <div
+                className={cn(
+                  "rounded-md border surface-1 px-4 py-3 flex items-center justify-between gap-4",
+                  p.accent
+                    ? "border-primary/50 shadow-[0_0_0_1px_hsl(var(--primary)/0.15)]"
+                    : "border-border",
+                )}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="text-meta font-mono text-muted-foreground tabular-nums">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <div className="min-w-0">
+                    <div className={cn("text-body font-medium tracking-tight", p.accent && "text-primary")}>
+                      {p.label}
+                    </div>
+                    <div className="text-meta font-mono text-muted-foreground truncate">
+                      {p.sub}
+                    </div>
+                  </div>
+                </div>
+                {p.accent && (
+                  <span className="text-meta font-mono uppercase tracking-[0.12em] text-primary shrink-0">
+                    most teams skip this
+                  </span>
+                )}
+              </div>
+              {i < PIPELINE.length - 1 && (
+                <div className="flex justify-center py-1.5 text-muted-foreground" aria-hidden="true">
+                  <ArrowDown className="h-3.5 w-3.5" />
+                </div>
+              )}
+            </li>
+          ))}
+        </ol>
+
+        <p className="mt-8 text-center text-meta text-muted-foreground max-w-xl mx-auto">
+          Prompt injection isn't the real problem. The real problem is what the
+          model can <span className="text-foreground font-medium">do</span> after compromise.
+        </p>
+      </div>
+    </section>
+
+    {/* ----------------------- Threat scenarios (attack paths) -------------- */}
+    <section id="threats" className="border-b border-border">
+      <div className="mx-auto max-w-6xl px-4 md:px-6 py-16 lg:py-20">
+        <div className="max-w-2xl">
+          <div className="text-meta uppercase tracking-[0.18em] text-primary font-mono">
+            Threat scenarios
+          </div>
+          <h2 className="mt-2 text-display font-semibold tracking-tight">
+            Real attack paths. Real blast radius.
+          </h2>
+          <p className="mt-3 text-body text-muted-foreground leading-relaxed">
+            Detectors don't sell. Incidents do. Here's how AnveGuard interrupts
+            three attack chains your team is already exposed to — most of which
+            never touch a "prompt injection" classifier.
+          </p>
+        </div>
+
+        <div className="mt-10 grid lg:grid-cols-3 gap-px bg-border border border-border">
+          {THREATS.map((t) => (
+            <article key={t.id} className="surface-1 p-6 flex flex-col">
+              <h3 className="text-h2 font-medium tracking-tight">{t.title}</h3>
+              <div className="mt-2 text-meta font-mono text-muted-foreground">
+                <span className="uppercase tracking-[0.12em]">blast radius:</span>{" "}
+                <span className="text-foreground">{t.blastRadius}</span>
+              </div>
+
+              <ol className="mt-5 space-y-1.5 flex-1">
+                {t.chain.map((step, i) => {
+                  const Icon = step.icon;
+                  const isOk = step.tone === "ok";
+                  return (
+                    <li key={i}>
+                      <div
+                        className={cn(
+                          "rounded-md border px-3 py-2 flex items-center gap-2.5 text-meta",
+                          isOk
+                            ? "border-status-ok/40 bg-status-ok/5 text-foreground"
+                            : "border-border surface-2 text-muted-foreground",
+                        )}
+                      >
+                        <Icon
+                          className={cn(
+                            "h-3.5 w-3.5 shrink-0",
+                            isOk ? "text-status-ok" : "text-status-block",
+                          )}
+                          aria-hidden="true"
+                        />
+                        <span className={cn("font-mono leading-snug", isOk && "font-medium")}>
+                          {step.label}
+                        </span>
+                      </div>
+                      {i < t.chain.length - 1 && (
+                        <div className="flex justify-center py-0.5 text-muted-foreground" aria-hidden="true">
+                          <ArrowDown className="h-3 w-3" />
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    {/* ----------------------- Tool governance ----------------------------- */}
+    <section id="tools" className="border-b border-border">
+      <div className="mx-auto max-w-6xl px-4 md:px-6 py-16 lg:py-20">
+        <div className="grid lg:grid-cols-12 gap-10 lg:gap-14 items-start">
+          <div className="lg:col-span-5">
+            <div className="text-meta uppercase tracking-[0.18em] text-primary font-mono">
+              Tool governance
+            </div>
+            <h2 className="mt-2 text-display font-semibold tracking-tight">
+              Policy-controlled tool execution.
+            </h2>
+            <p className="mt-4 text-body text-muted-foreground leading-relaxed">
+              Filters and detectors stop a fraction of the attack surface. The
+              durable control is governing what an agent is <span className="text-foreground font-medium">allowed to do</span> —
+              which shells, which paths, which domains, which rows.
+            </p>
+            <p className="mt-4 text-body text-muted-foreground leading-relaxed">
+              AnveGuard treats every tool call — function call, MCP capability,
+              shell command — as a permissioned action with its own allowlist,
+              audit row, and override workflow.
+            </p>
+            <div className="mt-7 flex flex-wrap items-center gap-2.5">
+              <Button size="lg" asChild>
+                <Link to="/dashboard/policies#guardrails">
+                  Open tool policies <ArrowRight className="ml-2 h-4 w-4" />
+                </Link>
+              </Button>
+              <Button size="lg" variant="outline" asChild>
+                <Link to="/docs/policies">How permissions evaluate</Link>
+              </Button>
+            </div>
+          </div>
+
+          <div className="lg:col-span-7">
+            <ul className="grid sm:grid-cols-2 gap-px bg-border border border-border">
+              {TOOL_CONTROLS.map((c) => {
+                const Icon = c.icon;
+                return (
+                  <li key={c.label} className="surface-1 p-5">
+                    <div className="flex items-center gap-2.5">
+                      <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border surface-2">
+                        <Icon className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
+                      </span>
+                      <div className="text-body font-medium tracking-tight">{c.label}</div>
+                    </div>
+                    <p className="mt-2 text-meta text-muted-foreground leading-relaxed">
+                      {c.body}
+                    </p>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
     {/* ---------------------------- Quickstart ----------------------------- */}
     <section id="how" className="border-b border-border">
       <div className="mx-auto max-w-6xl px-4 md:px-6 py-16 lg:py-20">
