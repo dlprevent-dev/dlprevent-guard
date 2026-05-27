@@ -29,7 +29,7 @@ const Simulation = () => {
       <Seo
         title="AI Agent Attack Simulation — Watch AnveGuard block prompt injection in real time"
         description="Cinematic live simulation: an AI agent receives an indirect prompt injection via a GitHub issue, attempts secret access and exfiltration, and AnveGuard intercepts at the tool layer with policy enforcement and immutable audit."
-        canonical="/simulation"
+        path="/simulation"
       />
 
       {/* ============================================================
