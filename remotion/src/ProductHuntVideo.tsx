@@ -16,28 +16,28 @@ import { S9_Outro }       from "./scenes/v3/S9_Outro";
 const t = linearTiming({ durationInFrames: 18 });
 
 // Total = 1944f, minus 8 transitions × 18f = 1800f = 60s @ 30fps
-// Sized to fit narration: S1=200 S2=220 S3=200 S4=150 S5=220 S6=190 S7=320 S8=260 S9=184
+// v4 durations tuned to VO: S1=170 S2=215 S3=180 S4=190 S5=215 S6=170 S7=300 S8=305 S9=199 = 1944
 export const ProductHuntVideo: React.FC = () => (
   <AbsoluteFill style={{ background: "#0A0E18" }}>
     <Backdrop />
     <TransitionSeries>
-      <TransitionSeries.Sequence durationInFrames={200}><S1_Title /></TransitionSeries.Sequence>
+      <TransitionSeries.Sequence durationInFrames={170}><S1_Title /></TransitionSeries.Sequence>
       <TransitionSeries.Transition presentation={scanWipe()} timing={t} />
-      <TransitionSeries.Sequence durationInFrames={220}><S2_DayInLife /></TransitionSeries.Sequence>
+      <TransitionSeries.Sequence durationInFrames={215}><S2_DayInLife /></TransitionSeries.Sequence>
       <TransitionSeries.Transition presentation={scanWipe()} timing={t} />
-      <TransitionSeries.Sequence durationInFrames={200}><S3_BlastRadius /></TransitionSeries.Sequence>
+      <TransitionSeries.Sequence durationInFrames={180}><S3_BlastRadius /></TransitionSeries.Sequence>
       <TransitionSeries.Transition presentation={scanWipe()} timing={t} />
-      <TransitionSeries.Sequence durationInFrames={150}><S4_Trap /></TransitionSeries.Sequence>
+      <TransitionSeries.Sequence durationInFrames={190}><S4_Trap /></TransitionSeries.Sequence>
       <TransitionSeries.Transition presentation={scanWipe()} timing={t} />
-      <TransitionSeries.Sequence durationInFrames={220}><S5_Obeys /></TransitionSeries.Sequence>
+      <TransitionSeries.Sequence durationInFrames={215}><S5_Obeys /></TransitionSeries.Sequence>
       <TransitionSeries.Transition presentation={scanWipe()} timing={t} />
-      <TransitionSeries.Sequence durationInFrames={190}><S6_Countdown /></TransitionSeries.Sequence>
+      <TransitionSeries.Sequence durationInFrames={170}><S6_Countdown /></TransitionSeries.Sequence>
       <TransitionSeries.Transition presentation={scanWipe()} timing={t} />
-      <TransitionSeries.Sequence durationInFrames={320}><S7_Intercept /></TransitionSeries.Sequence>
+      <TransitionSeries.Sequence durationInFrames={300}><S7_Intercept /></TransitionSeries.Sequence>
       <TransitionSeries.Transition presentation={scanWipe()} timing={t} />
-      <TransitionSeries.Sequence durationInFrames={260}><S8_Receipts /></TransitionSeries.Sequence>
+      <TransitionSeries.Sequence durationInFrames={305}><S8_Receipts /></TransitionSeries.Sequence>
       <TransitionSeries.Transition presentation={scanWipe()} timing={t} />
-      <TransitionSeries.Sequence durationInFrames={184}><S9_Outro /></TransitionSeries.Sequence>
+      <TransitionSeries.Sequence durationInFrames={199}><S9_Outro /></TransitionSeries.Sequence>
     </TransitionSeries>
   </AbsoluteFill>
 );
