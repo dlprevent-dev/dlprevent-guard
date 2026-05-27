@@ -114,7 +114,69 @@ const FAQ: { q: string; a: string }[] = [
   },
 ];
 
-const SECTION_IDS = ["product", "observability", "how", "faq"];
+const SECTION_IDS = ["product", "threats", "tools", "observability", "how", "faq"];
+
+// Threat scenarios — real attack narratives, not feature lists. Security
+// buyers think in incidents and blast radius, not detectors.
+const THREATS: { id: string; title: string; blastRadius: string; chain: { icon: typeof ShieldAlert; label: string; tone?: "danger" | "ok" }[] }[] = [
+  {
+    id: "indirect-injection",
+    title: "Indirect prompt injection via GitHub issue",
+    blastRadius: "Repo secrets · CI tokens · production credentials",
+    chain: [
+      { icon: FileCode, label: "GitHub issue contains hidden instructions" },
+      { icon: GitBranch, label: "Agent reads repository + .env secrets" },
+      { icon: Terminal, label: "MCP tool executes privileged action" },
+      { icon: Globe, label: "Data exfiltrated to attacker domain" },
+      { icon: Ban, label: "AnveGuard blocks tool call · policy violation", tone: "ok" },
+    ],
+  },
+  {
+    id: "exfil",
+    title: "Customer-data exfiltration through a chat agent",
+    blastRadius: "PII · payment tokens · support transcripts",
+    chain: [
+      { icon: FileCode, label: "User pastes 'summarize this and email it'" },
+      { icon: Database, label: "Agent queries internal CRM via tool" },
+      { icon: Globe, label: "Model attempts outbound HTTP to unknown domain" },
+      { icon: Ban, label: "AnveGuard denies — domain not on allowlist", tone: "ok" },
+    ],
+  },
+  {
+    id: "rogue-tool",
+    title: "Compromised model invokes destructive shell",
+    blastRadius: "Filesystem · DB rows · billing systems",
+    chain: [
+      { icon: ShieldAlert, label: "Jailbreak bypasses model safety" },
+      { icon: Terminal, label: "Model calls shell.exec('rm -rf /data')" },
+      { icon: Ban, label: "Tool permission layer rejects · shell not granted", tone: "ok" },
+      { icon: Database, label: "Audit log captures attempt + actor + payload", tone: "ok" },
+    ],
+  },
+];
+
+// Tool governance — the surface area that actually matters once a model
+// is compromised. AnveGuard treats every tool call as a permissioned action.
+const TOOL_CONTROLS: { icon: typeof Terminal; label: string; body: string }[] = [
+  { icon: Terminal, label: "Shell & code execution", body: "Allowlist commands, deny by default, capture every invocation with arguments." },
+  { icon: FileCode, label: "Filesystem", body: "Scope agents to specific paths, block writes outside a sandbox, deny secret reads." },
+  { icon: Globe, label: "Outbound domains", body: "Per-key egress allowlist. Block exfiltration to unknown hosts before the request leaves." },
+  { icon: Database, label: "SQL & data access", body: "Read-only roles, row-level scoping, refuse DDL and bulk SELECT from agent contexts." },
+  { icon: GitBranch, label: "GitHub & MCP", body: "Capability scoping for MCP servers — list which tools each key may invoke." },
+  { icon: ShieldAlert, label: "Privileged actions", body: "Require step-up approval for destructive ops: deletes, transfers, role grants." },
+];
+
+// Killer end-to-end pipeline — the single diagram every non-security
+// founder should be able to grok in five seconds.
+const PIPELINE: { label: string; sub: string; accent?: boolean }[] = [
+  { label: "User input", sub: "from your app or agent" },
+  { label: "Prompt scanner", sub: "injection · PII · keyword · regex" },
+  { label: "Policy engine", sub: "per-key rules · intents · severity" },
+  { label: "Tool permission layer", sub: "shell · fs · net · sql · MCP", accent: true },
+  { label: "LLM", sub: "OpenAI · Anthropic · Google · custom" },
+  { label: "Output scanner", sub: "leak detection · response policy" },
+  { label: "Audit + telemetry", sub: "immutable log · alerts · webhooks" },
+];
 
 const Landing = () => {
   const [activeSection, setActiveSection] = useState<string>("");
