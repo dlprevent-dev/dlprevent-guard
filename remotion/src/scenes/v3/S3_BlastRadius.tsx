@@ -36,7 +36,8 @@ export const S3_BlastRadius: React.FC = () => {
         <Ring delay={40} max={420} />
         <Ring delay={70} max={420} />
         <Ring delay={100} max={420} />
-        <Ring delay={130} max={420} />
+        <Ring delay={130} max={520} />
+        <Ring delay={155} max={900} />
 
         {/* center agent */}
         <g>
