@@ -113,6 +113,110 @@ Plus a layered **multilingual** keyword engine (fuzzy match + edit distance + se
 
 ---
 
+## The pipeline — every request, every stage
+
+> Prompt injection isn't the real problem. The real problem is what the model can **do** after compromise.
+
+One pipeline runs in front of every model and every tool call. Each stage is independently configurable — and independently auditable.
+
+```text
+        ┌────────────────────────────┐
+        │        User input          │  from your app or agent
+        └─────────────┬──────────────┘
+                      ▼
+        ┌────────────────────────────┐
+        │      Prompt scanner        │  injection · PII · keyword · regex
+        └─────────────┬──────────────┘
+                      ▼
+        ┌────────────────────────────┐
+        │      Policy engine         │  per-key rules · intents · severity
+        └─────────────┬──────────────┘
+                      ▼
+        ╔════════════════════════════╗
+        ║  Tool permission layer     ║  shell · fs · net · sql · MCP
+        ║   ← most teams skip this   ║
+        ╚═════════════┬══════════════╝
+                      ▼
+        ┌────────────────────────────┐
+        │            LLM             │  OpenAI · Anthropic · Google · custom
+        └─────────────┬──────────────┘
+                      ▼
+        ┌────────────────────────────┐
+        │      Output scanner        │  leak detection · response policy
+        └─────────────┬──────────────┘
+                      ▼
+        ┌────────────────────────────┐
+        │    Audit + telemetry       │  immutable log · alerts · webhooks
+        └────────────────────────────┘
+```
+
+---
+
+## Threat scenarios — real attack paths, real blast radius
+
+Detectors don't sell. Incidents do. Here's how AnveGuard interrupts three attack chains your team is already exposed to — most of which never touch a "prompt injection" classifier.
+
+### 1. Indirect prompt injection via GitHub issue
+**Blast radius:** Repo secrets · CI tokens · production credentials
+
+```text
+GitHub issue contains hidden instructions
+        ↓
+Agent reads repository + .env secrets
+        ↓
+MCP tool executes privileged action
+        ↓
+Data exfiltrated to attacker domain
+        ↓
+✅ AnveGuard blocks tool call · policy violation
+```
+
+### 2. Customer-data exfiltration through a chat agent
+**Blast radius:** PII · payment tokens · support transcripts
+
+```text
+User pastes "summarize this and email it"
+        ↓
+Agent queries internal CRM via tool
+        ↓
+Model attempts outbound HTTP to unknown domain
+        ↓
+✅ AnveGuard denies — domain not on egress allowlist
+```
+
+### 3. Compromised model invokes destructive shell
+**Blast radius:** Filesystem · DB rows · billing systems
+
+```text
+Jailbreak bypasses model safety
+        ↓
+Model calls shell.exec("rm -rf /data")
+        ↓
+✅ Tool permission layer rejects · shell capability not granted
+        ↓
+✅ Audit log captures attempt + actor + payload
+```
+
+---
+
+## Tool governance — policy-controlled tool execution
+
+Filters and detectors stop a fraction of the attack surface. The durable control is governing **what an agent is allowed to do** — which shells, which paths, which domains, which rows. AnveGuard treats every tool call (function call, MCP capability, shell command) as a permissioned action with its own allowlist, audit row, and override workflow.
+
+| Capability | What you can govern |
+|---|---|
+| **Shell & code execution** | Allowlist commands, deny by default, capture every invocation with arguments |
+| **Filesystem** | Scope agents to specific paths, block writes outside a sandbox, deny secret reads |
+| **Outbound domains** | Per-key egress allowlist — block exfiltration to unknown hosts before the request leaves |
+| **SQL & data access** | Read-only roles, row-level scoping, refuse DDL and bulk `SELECT` from agent contexts |
+| **GitHub & MCP** | Capability scoping for MCP servers — list which tools each key may invoke |
+| **Privileged actions** | Require step-up approval for destructive ops: deletes, transfers, role grants |
+
+This is where the market is moving. Prompt detection commoditizes; **runtime telemetry, policy orchestration, and execution governance** are the durable moat.
+
+---
+
+
 ## Architecture
 
 ```text
