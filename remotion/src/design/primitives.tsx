@@ -41,10 +41,9 @@ export const useBreath = (total: number, amount = 0.015) => {
 
 export const Panel: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }> = ({ children, style }) => (
   <div style={{
-    background: C.panel,
+    background: C.panelSolid,
     border: `1px solid ${C.hair}`,
     borderRadius: 12,
-    backdropFilter: "blur(6px)",
     boxShadow: `0 1px 0 rgba(255,255,255,0.04) inset, 0 30px 80px -40px rgba(0,0,0,0.6)`,
     ...style,
   }}>{children}</div>
