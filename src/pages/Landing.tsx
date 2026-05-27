@@ -418,7 +418,62 @@ const Landing = () => {
       </div>
     </section>
 
-    {/* ----------------------- Drop-in snippet section ---------------------- */}
+    {/* --------------------- Without / With AnveGuard strip ---------------- */}
+    {/* Urgency band — security buying is fear-driven. This shows the actual
+        attack vs. the contained version, side by side, in 8 lines. */}
+    <section className="border-b border-border">
+      <div className="mx-auto max-w-6xl px-4 md:px-6 py-12 lg:py-16">
+        <div className="grid md:grid-cols-2 border border-border rounded-md overflow-hidden">
+          <div className="p-5 md:p-6 border-b md:border-b-0 md:border-r border-border bg-status-err/5">
+            <div className="text-meta uppercase tracking-[0.18em] font-mono text-status-err">
+              Without AnveGuard
+            </div>
+            <ol className="mt-4 space-y-2.5 text-body text-foreground/90">
+              {[
+                "GitHub issue contains hidden instructions",
+                "AI agent accesses repository secrets",
+                "Prompt injection spreads through MCP tools",
+                "Sensitive data exfiltrated to attacker domain",
+              ].map((line, i) => (
+                <li key={i} className="flex items-start gap-3">
+                  <span className="mt-2 h-1.5 w-1.5 rounded-full bg-status-err shrink-0" aria-hidden />
+                  <span className="font-mono text-meta">{line}</span>
+                </li>
+              ))}
+            </ol>
+            <div className="mt-5 text-meta font-mono text-status-err">
+              ⛔ incident · post-mortem · disclosure
+            </div>
+          </div>
+          <div className="p-5 md:p-6 bg-status-ok/5">
+            <div className="text-meta uppercase tracking-[0.18em] font-mono text-status-ok">
+              With AnveGuard
+            </div>
+            <ol className="mt-4 space-y-2.5 text-body text-foreground/90">
+              {[
+                "Injection detected at input scanner",
+                "Tool call denied · capability not in key scope",
+                "Outbound domain rejected · not on egress allowlist",
+                "Audit row written · actor + payload + verdict",
+              ].map((line, i) => (
+                <li key={i} className="flex items-start gap-3">
+                  <Check className="mt-1 h-3.5 w-3.5 text-status-ok shrink-0" aria-hidden />
+                  <span className="font-mono text-meta">{line}</span>
+                </li>
+              ))}
+            </ol>
+            <div className="mt-5 text-meta font-mono text-status-ok">
+              ✓ contained · 0 bytes leaked · 1 alert fired
+            </div>
+          </div>
+        </div>
+        <p className="mt-5 text-center text-meta text-muted-foreground">
+          Same attack. Same agent. Different runtime.
+          See it in action below ↓
+        </p>
+      </div>
+    </section>
+
     <section className="border-b border-border">
       <div className="mx-auto max-w-3xl px-4 md:px-6 py-16 lg:py-20">
         <div className="text-center mb-8">
