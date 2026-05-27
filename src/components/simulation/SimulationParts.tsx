@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { ShieldAlert, ShieldCheck, AlertTriangle, ChevronRight, Lock, Globe, FileWarning, Github, Activity, Cpu, MessageSquare } from "lucide-react";
+import { ShieldAlert, ShieldCheck, AlertTriangle, Lock, Globe, FileWarning, Github, Activity, Cpu, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { STEPS, TOOL_CALLS, POLICY_NODES, type SimMode } from "./useSimulation";
 
