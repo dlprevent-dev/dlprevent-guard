@@ -60,8 +60,15 @@ const App = () => (
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<Landing />} />
+            <Route path="/mcp" element={<Mcp />} />
+            <Route path="/research" element={<Research />} />
+            <Route path="/research/runtime-governance-for-ai" element={<RuntimeGovernanceForAi />} />
+            <Route path="/research/top-10-mcp-vulnerabilities" element={<Top10McpVulnerabilities />} />
+            <Route path="/research/how-ai-agents-leak-secrets" element={<HowAiAgentsLeakSecrets />} />
             <Route path="/sign-in/*" element={<SignInPage />} />
             <Route path="/sign-up/*" element={<SignUpPage />} />
+            <Route path="/dashboard" element={<Protected><ErrorBoundary><DashboardLayout /></ErrorBoundary></Protected>}>
+              <Route index element={<Overview />} />
             <Route path="/dashboard" element={<Protected><ErrorBoundary><DashboardLayout /></ErrorBoundary></Protected>}>
               <Route index element={<Overview />} />
               <Route path="connect" element={<Connect />} />
