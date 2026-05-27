@@ -10,7 +10,7 @@ export const S6_Outro: React.FC = () => {
   const mark = spring({ frame: f - 26, fps, config: SPRING.accent });
   const tag = useEnter(56);
   const foot = useEnter(76);
-  const fade = interpolate(f, [150, 180], [1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const fade = interpolate(f, [220, 248], [1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
   return (
     <AbsoluteFill style={{ fontFamily: FONTS.sans, color: C.paper, alignItems: "center", justifyContent: "center", opacity: fade }}>
