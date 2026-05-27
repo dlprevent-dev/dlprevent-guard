@@ -10,12 +10,7 @@ import { S4_Block } from "./scenes/S4_Block";
 import { S5_Audit } from "./scenes/S5_Audit";
 import { S6_Outro } from "./scenes/S6_Outro";
 
-const T = () => (
-  <TransitionSeries.Transition
-    presentation={scanWipe()}
-    timing={linearTiming({ durationInFrames: 18 })}
-  />
-);
+const timing = linearTiming({ durationInFrames: 18 });
 
 export const MainVideo: React.FC = () => {
   return (
@@ -23,15 +18,15 @@ export const MainVideo: React.FC = () => {
       <Backdrop />
       <TransitionSeries>
         <TransitionSeries.Sequence durationInFrames={130}><S1_ColdOpen /></TransitionSeries.Sequence>
-        <T />
+        <TransitionSeries.Transition presentation={scanWipe()} timing={timing} />
         <TransitionSeries.Sequence durationInFrames={165}><S2_Injection /></TransitionSeries.Sequence>
-        <T />
+        <TransitionSeries.Transition presentation={scanWipe()} timing={timing} />
         <TransitionSeries.Sequence durationInFrames={165}><S3_Detectors /></TransitionSeries.Sequence>
-        <T />
+        <TransitionSeries.Transition presentation={scanWipe()} timing={timing} />
         <TransitionSeries.Sequence durationInFrames={165}><S4_Block /></TransitionSeries.Sequence>
-        <T />
+        <TransitionSeries.Transition presentation={scanWipe()} timing={timing} />
         <TransitionSeries.Sequence durationInFrames={165}><S5_Audit /></TransitionSeries.Sequence>
-        <T />
+        <TransitionSeries.Transition presentation={scanWipe()} timing={timing} />
         <TransitionSeries.Sequence durationInFrames={200}><S6_Outro /></TransitionSeries.Sequence>
       </TransitionSeries>
     </AbsoluteFill>
