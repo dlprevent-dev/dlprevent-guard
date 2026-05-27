@@ -9,6 +9,7 @@ import { CLERK_PUBLISHABLE_KEY } from "@/lib/clerk";
 import Landing from "./pages/Landing";
 import NotFound from "./pages/NotFound";
 import Mcp from "./pages/Mcp";
+import Simulation from "./pages/Simulation";
 import Research from "./pages/Research";
 import RuntimeGovernanceForAi from "./pages/research/RuntimeGovernanceForAi";
 import Top10McpVulnerabilities from "./pages/research/Top10McpVulnerabilities";
@@ -61,6 +62,7 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Landing />} />
             <Route path="/mcp" element={<Mcp />} />
+            <Route path="/simulation" element={<Simulation />} />
             <Route path="/research" element={<Research />} />
             <Route path="/research/runtime-governance-for-ai" element={<RuntimeGovernanceForAi />} />
             <Route path="/research/top-10-mcp-vulnerabilities" element={<Top10McpVulnerabilities />} />
