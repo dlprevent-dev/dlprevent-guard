@@ -8,6 +8,11 @@ import { ErrorBoundary } from "@/components/error-boundary";
 import { CLERK_PUBLISHABLE_KEY } from "@/lib/clerk";
 import Landing from "./pages/Landing";
 import NotFound from "./pages/NotFound";
+import Mcp from "./pages/Mcp";
+import Research from "./pages/Research";
+import RuntimeGovernanceForAi from "./pages/research/RuntimeGovernanceForAi";
+import Top10McpVulnerabilities from "./pages/research/Top10McpVulnerabilities";
+import HowAiAgentsLeakSecrets from "./pages/research/HowAiAgentsLeakSecrets";
 import DashboardLayout from "./pages/dashboard/DashboardLayout";
 import Overview from "./pages/dashboard/Overview";
 import Keys from "./pages/dashboard/Keys";
@@ -55,6 +60,11 @@ const App = () => (
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<Landing />} />
+            <Route path="/mcp" element={<Mcp />} />
+            <Route path="/research" element={<Research />} />
+            <Route path="/research/runtime-governance-for-ai" element={<RuntimeGovernanceForAi />} />
+            <Route path="/research/top-10-mcp-vulnerabilities" element={<Top10McpVulnerabilities />} />
+            <Route path="/research/how-ai-agents-leak-secrets" element={<HowAiAgentsLeakSecrets />} />
             <Route path="/sign-in/*" element={<SignInPage />} />
             <Route path="/sign-up/*" element={<SignUpPage />} />
             <Route path="/dashboard" element={<Protected><ErrorBoundary><DashboardLayout /></ErrorBoundary></Protected>}>
