@@ -1054,9 +1054,9 @@ const Landing = () => {
           >
             <Github className="h-3.5 w-3.5" /> GitHub
           </a>
-          <Link to="/docs" className="hover:text-foreground transition-colors">
-            Docs
-          </Link>
+          <Link to="/mcp" className="hover:text-foreground transition-colors">MCP</Link>
+          <Link to="/research" className="hover:text-foreground transition-colors">Research</Link>
+          <Link to="/docs" className="hover:text-foreground transition-colors">Docs</Link>
           <span className="inline-flex items-center gap-2">
             <span className="h-1.5 w-1.5 rounded-full bg-status-ok live-pulse" />
             All systems operational
