@@ -1,134 +1,79 @@
-# AnveGuard — 60s Product Hunt Launch Film v3
+# AnveGuard Product Hunt Video — v3 Polish Pass
 
-A cinematic, motion-graphics-forward 60s product demo in the style of top Product Hunt launch films (Linear, Arc, Raycast, Cron). Rebuilt from scratch with a stronger narrative, real motion-graphics craft (kinetic typography, SVG path tracing, layered parallax, number tickers, shape morphs), and a 4-agent production pipeline.
+Goal: take `anveguard-producthunt-60s-v2.mp4` from "good motion graphics with a music bed" to a **launch-grade 60s film** with a real story, an ElevenLabs voiceover that carries the narrative, and sound design that punches every beat.
 
-## Creative Direction
+## 1. Rewrite the story (tighter, more human)
 
-**Aesthetic:** "Linear × Stripe × Vercel" — Tech Product / Cinematic Minimal hybrid. Editorial pacing, infrastructure-grade restraint, with bursts of kinetic energy at hero beats.
+Current arc is solid (Setup → Crisis → Resolution) but feels abstract. New script, ~145 words, paced to 60s with breathing room:
 
-**Palette (locked):**
-- Ink `#0A0E18` (bg), Panel `#0F1524`, Rule `#1E2A44`
-- Paper `#F4F6FB` (primary text)
-- Signal `#5B8DEF` (brand accent)
-- Alert `#FF6B6B` (threat)
-- Success `#3DDC97` (resolved)
-- Glow `#7BA8FF` (accent rim only)
+| Time | Scene | VO line |
+|---|---|---|
+| 0–6s | S1 Title | "Your AI agent isn't a tool anymore. It's an employee — with the keys to everything." |
+| 6–13s | S2 Day in Life | "Every day it reads your issues, your database, your secrets. Thousands of times." |
+| 13–20s | S3 Blast Radius | "One agent. One prompt. The blast radius of your entire company." |
+| 20–27s | S4 Trap | "Then someone hides a single line in a GitHub issue…" |
+| 27–34s | S5 Obeys | "…and your agent obeys. In 1.4 seconds, it's already moving." |
+| 34–40s | S6 Countdown | "Three seconds to exfiltration. No alert. No log. No chance." |
+| 40–48s | S7 Intercept | "AnveGuard sits in front of every prompt, every tool call, every response. Inspected in under 15 milliseconds. Denied." |
+| 48–55s | S8 Receipts | "Zero bytes leaked. Two hundred forty-seven kilobytes saved. Signed, replayable, done." |
+| 55–60s | S9 Outro | "AnveGuard. The runtime firewall for AI agents." |
 
-**Typography:** Inter Tight (display, weights 500/600/700) + JetBrains Mono (code/labels). Both via `@remotion/google-fonts`.
+Voice: ElevenLabs **Brian** (`nPczCjzI2devNBz1zQrb`) — calm, authoritative, trailer-grade. Model `eleven_multilingual_v2`, stability 0.45, similarity 0.8, style 0.35.
 
-**Motion system (one rulebook, applied everywhere):**
-- Default entrance: 14px rise + opacity, spring `{damping: 22, stiffness: 180}`
-- Accent entrance (hero text): clip-path mask reveal left→right, 22f
-- Exit: 6px fall + blur-to-0 + opacity, 12f
-- Scene transition: 18f signal-blue scan-line wipe (consistent across all 9 scenes)
-- Numbers: count-up tickers driven by `interpolate()` with `easeOutCubic`
-- Camera: 1.5% slow zoom + 8px parallax drift on every scene (no static frames)
+## 2. Story / motion improvements per scene
 
-## The Story (improved arc)
+- **S1**: Hold title 0.5s longer; add subtle camera push-in (1.0 → 1.04 scale over 130f).
+- **S2**: Slow the packet cycle from 80f → 110f so eye can track; dim non-active edges.
+- **S3**: Add a fourth, larger ring that breaks the frame on the last pulse — visual "oh shit" moment synced to VO "entire company."
+- **S4**: After typewriter completes, the malicious line gets a red underline draw + glitch shake (3f amplitude 4px) on the word "ignore."
+- **S5**: Reasoning lines should cascade faster (one every 8f instead of 14f) so the 1.4s arc timer feels urgent. Add a heartbeat pulse on the agent core.
+- **S6**: Replace 3→2→1 with **03 · 02 · 01 · BREACH**, last word stamping full-screen red for 6f then cut.
+- **S7**: Shield draws THEN the three DENIED rows cascade in rhythm with three impact SFX (one per row). Add a brief screen-flash signal-blue on each deny.
+- **S8**: Stat tiles tick up sequentially (not in parallel) so each number lands with its own tick SFX; terminal log auto-scrolls.
+- **S9**: Wordmark assembly stays; add a final 12f signal-blue radial bloom behind it on the last VO word.
 
-The previous 60s cut was a slideshow of features. This version is a **3-act narrative**:
+## 3. Sound design (rebuild from scratch)
 
-- **Act I — Setup (0–18s):** A normal day. An agent does normal work. Stakes get planted.
-- **Act II — Crisis (18–38s):** The attack arrives in plain sight. The agent is about to comply. We *feel* the breach happening in real time.
-- **Act III — Resolution (38–60s):** AnveGuard intercepts at every layer. Proof. Product. Promise.
+Discard the current SFX layout — too cluttered. New plan, all via ElevenLabs SFX API, saved to `remotion/public/audio/v2/`:
 
-## Storyboard (9 scenes, 1800 frames @ 30fps)
+**Music bed (3 stems, crossfaded):**
+- `bed_setup.mp3` (0–20s) — ambient pad, low pulse, "watchful calm"
+- `bed_tension.mp3` (18–40s) — sub-bass riser, ticking percussion, growing dread
+- `bed_resolution.mp3` (38–60s) — cinematic anthem, hopeful brass + synth, triumphant
 
-```
-ACT I — SETUP
-00.0–04.0  S1 Cold Open       120f  Kinetic title: "Your AI agent is a new kind of employee."
-04.0–11.0  S2 A Day in the    210f  Animated org-chart of agent + tools + data sources;
-              Life of an Agent       SVG paths trace between nodes; "1,184 runs / day"
-11.0–18.0  S3 The Blast Radius 210f Map of agent's reach: prod DB, AWS, Slack, GitHub;
-                                     concentric blast-radius rings pulse outward.
+**SFX (12, precise):**
+- `vo_whoosh.mp3` @ 0.0s — title swoosh
+- `data_pulse.mp3` looped @ 6–13s — soft packet blips
+- `ring_pulse.mp3` ×3 @ 13.5, 15.5, 18s — ominous low booms
+- `typewriter.mp3` @ 20–25s — keys
+- `glitch_stab.mp3` @ 25.5s — malicious line reveal
+- `heartbeat.mp3` looped @ 27–34s — agent obeying
+- `tick.mp3` ×3 @ 34, 35.5, 37s — countdown beats
+- `breach_impact.mp3` @ 39s — full-screen red stamp
+- `shield_form.mp3` @ 40s — shield draw-on
+- `deny_stamp.mp3` ×3 @ 42, 44, 46s — DENIED rows
+- `success_chime.mp3` @ 49s — "zero bytes"
+- `brand_riser.mp3` @ 55s — outro swell
 
-ACT II — CRISIS
-18.0–25.0  S4 The Trap        210f  GitHub issue #482 types in; hidden HTML comment
-                                     fades into view; red "indirect injection" pill.
-25.0–32.0  S5 The Agent Obeys 210f  Live reasoning typewriter; 3 tool-call lines stream;
-                                     timer ticks 0.0s → 1.4s; "247 KB" ticker counts up.
-32.0–38.0  S6 The Breach Clock 180f Split screen: countdown 03…02…01; secrets flash;
-                                     a red rule sweeps the screen edge-to-edge.
+**Voiceover ducking:** music bed automatically ducks -8 dB during VO segments via ffmpeg `sidechaincompress`. VO sits at -2 dB, music at -14 dB under VO / -10 dB clean.
 
-ACT III — RESOLUTION
-38.0–46.0  S7 AnveGuard        240f Hero product reveal: shield mark SVG-draws on;
-              Intercepts             tool calls morph from red→blue, "DENIED · 403"
-                                     stamps in with spring overshoot.
-46.0–53.0  S8 The Receipts    210f  Signed audit log scrolls; 4 stat tickers count up
-                                     (0 bytes leaked, 12 ms decision, 100% replayable,
-                                     247 KB saved).
-53.0–60.0  S9 Outro            210f  Wordmark spring-in, tagline mask-reveal,
-                                     "Private beta · anveguard.dev" chip,
-                                     Product Hunt launch date stamp.
-```
+## 4. Technical execution
 
-Total = 1800f, minus 8 × 18f transitions = effective runtime 59.5s.
+1. **Generate VO**: one script call per scene line (9 calls) using ElevenLabs TTS with request stitching (previous_text/next_text) for natural prosody. Save to `remotion/public/audio/v2/vo/scene_N.mp3`.
+2. **Probe each VO** with `ffprobe` to get exact durations, then **rebalance scene frame counts** so each scene fits its VO + 0.5s tail. Update `ProductHuntVideo.tsx` durations.
+3. **Generate 3 music stems + 12 SFX** via ElevenLabs SFX endpoint, in parallel.
+4. **Add VO playback inside Remotion** using `<Audio src={staticFile('audio/v2/vo/scene_N.mp3')} />` per scene — so timing stays in sync with motion edits during re-renders.
+5. **Edit motion improvements** in the 9 scene files per section 2.
+6. **Re-render** the silent MP4 via `scripts/render-remotion.mjs` to `/mnt/documents/anveguard-producthunt-60s-v3-silent.mp4`.
+7. **Final mux** with ffmpeg: VO + 3-stem music crossfade + 12 SFX + sidechain ducking + alimiter. Output → `/mnt/documents/anveguard-producthunt-60s-v3.mp4`.
+8. **QA**: extract 6 stills at key beats, verify visually; ffprobe the final to confirm 60s, AAC stereo 192k, peak ≤ -1 dBFS.
 
-## Motion-Graphics Craft (the new stuff)
+## Deliverable
 
-Each scene gets at least one signature motion-graphics moment:
+`/mnt/documents/anveguard-producthunt-60s-v3.mp4` — 60s, 1920×1080, with narration, music, and SFX. Previous v2 stays untouched for comparison.
 
-- **S1:** Per-word stagger on the title with subtle 3D perspective tilt; word "employee" highlights in signal-blue with a swipe underline drawn by `strokeDashoffset`.
-- **S2:** SVG node graph where connection paths draw with `strokeDashoffset` animation; small data packets (circles) travel along each path.
-- **S3:** 3 concentric SVG rings expand from agent center, each on a delay, fading out as they grow.
-- **S4:** Typewriter for the issue body using per-character `interpolate`; the hidden malicious line is masked by a scan-line that reveals it in red.
-- **S5:** Reasoning panel uses cascading line reveals; right-side timer is a real SVG arc that fills as the breach clock runs.
-- **S6:** Big 03→02→01 countdown with scale-pulse on each tick; horizontal red rule sweeps across with `clipPath`.
-- **S7:** Shield logo built from SVG paths that draw on with `strokeDashoffset`; tool-call rows morph color and stamp "DENIED" with spring overshoot.
-- **S8:** Number tickers using `interpolate` with `easeOutCubic` — 0→0, 0→12, 0→100, 0→247.
-- **S9:** Wordmark assembles letter-by-letter; tagline mask-reveals; subtle particle field drifts in background.
+## Risks / notes
 
-## The Multi-Agent Production Pipeline
-
-I'll run this as 4 explicit agent passes, each visible in the chat output:
-
-1. **Planner Agent** — Locks story arc, scene durations, motion system, palette. Writes `remotion/STORYBOARD.md` so future sessions can iterate.
-2. **Storyboard Agent** — Writes a 1-line shot description + key motion-graphics moment for each of the 9 scenes into the same doc. Defines beats.
-3. **Scene-Builder Agent** — Builds the 9 scene components, the shared design system (`tokens.ts`, `Type.tsx`, `Backdrop.tsx`, `ScanWipe.tsx`, plus new `NumberTicker.tsx`, `SvgDraw.tsx`, `NodeGraph.tsx`), and wires `MainVideo.tsx`.
-4. **QA Agent** — Renders 11 spot-check stills (one per scene + 2 transitions). Reviews each frame for: text overflow, blank frames, dead tails, motion timing, hierarchy. Returns a pass/fail per scene.
-5. **Iterator Agent** — Fixes anything QA flagged, re-renders affected ranges, re-checks. Repeats until clean.
-
-Each agent's findings are reported inline in the chat so you can see the process.
-
-## Files
-
-**New:**
-- `remotion/STORYBOARD.md` — locked plan + per-scene beats (versioned for future iterations)
-- `remotion/src/design/NumberTicker.tsx` — count-up component driven by frame
-- `remotion/src/design/SvgDraw.tsx` — path-draw primitive using `strokeDashoffset`
-- `remotion/src/design/NodeGraph.tsx` — animated node + edge graph for S2
-- `remotion/src/scenes/S1_Title.tsx` — kinetic typography opener
-- `remotion/src/scenes/S2_DayInLife.tsx` — agent + tools node graph
-- `remotion/src/scenes/S3_BlastRadius.tsx` — concentric pulse rings
-- `remotion/src/scenes/S4_Trap.tsx` — GitHub issue typewriter (rebuilt)
-- `remotion/src/scenes/S5_Obeys.tsx` — reasoning + breach timer (rebuilt)
-- `remotion/src/scenes/S6_Countdown.tsx` — 03·02·01 breach clock
-- `remotion/src/scenes/S7_Intercept.tsx` — shield draw + tool-call deny (rebuilt)
-- `remotion/src/scenes/S8_Receipts.tsx` — audit log + 4 stat tickers (rebuilt)
-- `remotion/src/scenes/S9_Outro.tsx` — wordmark assembly + launch chip (rebuilt)
-
-**Edited:**
-- `remotion/src/MainVideo.tsx` — wire new 9-scene `TransitionSeries`
-- `remotion/src/Root.tsx` — register `productHunt` composition (1920×1080, 1800f, 30fps); keep prior `main` composition intact for back-compat
-
-## Render & Deliverable
-
-- Render via existing `scripts/render-remotion.mjs` with `COMPOSITION=productHunt`
-- Output: `/mnt/documents/anveguard-producthunt-60s.mp4`
-- Expected size ~6 MB, render ~3–4 min at concurrency=1
-
-## Out of Scope (follow-ups after approval)
-
-- Audio bed / voiceover
-- 9:16 vertical cut
-- 10s teaser cut
-- Embedding on `/simulation` page
-- Any changes to the live web app
-
-## Technical Notes
-
-- All animation via `useCurrentFrame()` + `interpolate()` / `spring()` (no CSS animations)
-- All scenes use `AbsoluteFill` root; shared `Backdrop` outside the `TransitionSeries` for persistent parallax grid
-- Composition duration capped at 1800f to avoid the dead-tail bug from v2
-- Outro fade window aligned to scene end so the last frame is the wordmark, not black
-- Spot-check stills via `ffmpeg -ss` extraction from a low-concurrency draft render (CLI `remotion still` doesn't work in this sandbox — bundled chrome-headless-shell is missing libnspr4)
+- ElevenLabs SFX max 22s per call → music stems generated as 2× 10–11s chunks per stem and crossfaded.
+- If total VO runs >58s I'll trim filler words, not cut beats.
+- No changes to product/frontend code — all work is in `remotion/` and `/mnt/documents/`.
