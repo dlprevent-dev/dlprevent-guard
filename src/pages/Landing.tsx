@@ -35,11 +35,12 @@ import { Seo } from "@/components/seo";
 const GITHUB_URL = "https://github.com/ANVE-AI/prompt-sentinel-flow";
 
 const NAV = [
-  { href: "#product", label: "Product" },
   { href: "#threats", label: "Threats" },
   { href: "#tools", label: "Tool governance" },
-  { href: "#observability", label: "Observability" },
+  { href: "#product", label: "Product" },
   { href: "#how", label: "Quickstart" },
+  { href: "/mcp", label: "MCP" },
+  { href: "/research", label: "Research" },
   { href: "/docs", label: "Docs" },
 ];
 
