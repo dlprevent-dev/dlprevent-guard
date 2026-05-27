@@ -5,6 +5,9 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+const compId = process.env.COMPOSITION ?? "main";
+const out = process.env.OUT ?? `/mnt/documents/anveguard-simulation-v2-${compId}.mp4`;
+
 const bundled = await bundle({
   entryPoint: path.resolve(__dirname, "../src/index.ts"),
   webpackOverride: (c) => c,
@@ -16,17 +19,17 @@ const browser = await openBrowser("chrome", {
   chromeMode: "chrome-for-testing",
 });
 
-const composition = await selectComposition({ serveUrl: bundled, id: "main", puppeteerInstance: browser });
+const composition = await selectComposition({ serveUrl: bundled, id: compId, puppeteerInstance: browser });
 
 await renderMedia({
   composition,
   serveUrl: bundled,
   codec: "h264",
-  outputLocation: process.env.OUT ?? "/mnt/documents/anveguard-simulation.mp4",
+  outputLocation: out,
   puppeteerInstance: browser,
   muted: true,
   concurrency: 1,
 });
 
 await browser.close({ silent: false });
-console.log("done");
+console.log("rendered →", out);
