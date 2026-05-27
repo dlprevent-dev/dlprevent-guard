@@ -656,6 +656,27 @@ const Landing = () => {
       </div>
     </section>
 
+    {/* ----------------------- Live attack trace demo ---------------------- */}
+    <section id="demo" className="border-b border-border">
+      <div className="mx-auto max-w-4xl px-4 md:px-6 py-16 lg:py-20">
+        <div className="max-w-2xl mb-8">
+          <div className="text-meta uppercase tracking-[0.18em] text-primary font-mono">
+            Live trace
+          </div>
+          <h2 className="mt-2 text-display font-semibold tracking-tight">
+            Watch a real attack get blocked.
+          </h2>
+          <p className="mt-3 text-body text-muted-foreground leading-relaxed">
+            Scripted from the policy-engine test corpus. The model gets the
+            injection, tries the tool, AnveGuard denies — twice — and writes
+            the audit row. No backend, no smoke.
+          </p>
+        </div>
+        <AttackTraceDemo />
+      </div>
+    </section>
+
+
     {/* ----------------------- Tool governance ----------------------------- */}
     <section id="tools" className="border-b border-border">
       <div className="mx-auto max-w-6xl px-4 md:px-6 py-16 lg:py-20">
