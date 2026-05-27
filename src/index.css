@@ -205,3 +205,27 @@
   }
   .shadow-glow { box-shadow: 0 0 0 1px hsl(var(--primary) / 0.4), 0 8px 32px -8px hsl(var(--primary) / 0.35); }
 }
+
+/* Clerk: hide "Secured by Clerk" branding + "Development mode" badge.
+   Internal class hashes change between releases, so target every known
+   variant plus structural/href-based fallbacks. */
+.cl-internal-1rpdi70,
+.cl-internal-b3fm6y,
+.cl-internal-1dauvpw,
+.cl-internal-uyu30o,
+.cl-internal-1hp5nqm,
+[class*="cl-internal"][class*="branded"],
+[class*="cl-internal"][class*="Branding"],
+.cl-badge,
+.cl-poweredByClerk,
+.cl-development-mode,
+.cl-internalDevelopmentMode,
+[data-localization-key="badge__developmentMode"],
+a[href*="clerk.com"],
+a[href*="go.clerk.com"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
