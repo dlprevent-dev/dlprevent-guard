@@ -12,6 +12,7 @@ import { Search, ShieldAlert, Ban, ShieldCheck, Inbox, Layers, Sparkles, AlertTr
 import { cn } from "@/lib/utils";
 import { useDashboardApi } from "@/lib/api";
 import { ReplayButton } from "@/components/replay-button";
+import { SaveRegressionButton } from "@/components/save-regression-button";
 import { GuidedTour, hasVisitedTour, type TourStep } from "@/components/guided-tour";
 import { HelpCircle } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -268,6 +269,14 @@ const RequestLogs = () => {
                   <KeyValue label="Model">{selected.model}</KeyValue>
                   <KeyValue label="Tokens in">{selected.tokens_in ?? "—"}</KeyValue>
                   <KeyValue label="Tokens out">{selected.tokens_out ?? "—"}</KeyValue>
+                  {selected.request_id && <KeyValue label="Request ID">{selected.request_id}</KeyValue>}
+                  {Array.isArray(selected.tools_names) && selected.tools_names.length > 0 && (
+                    <KeyValue label="Tools" mono={false}>{selected.tools_names.join(", ")}</KeyValue>
+                  )}
+                  {Array.isArray(selected.response_tool_calls) && selected.response_tool_calls.length > 0 && (
+                    <KeyValue label="Tool calls" mono={false}>{selected.response_tool_calls.join(", ")}</KeyValue>
+                  )}
+                  {selected.egress_domain && <KeyValue label="Egress" mono={false}>{selected.egress_domain}</KeyValue>}
                 </div>
                 {(selected.block_reason || selected.status?.startsWith("blocked")) && (
                   <BlockReasonBlock log={selected} />
@@ -305,9 +314,12 @@ const RequestLogs = () => {
                       </div>
                     )}
                     <div>
-                      <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center justify-between mb-1.5 gap-2">
                         <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Messages</div>
-                        <ReplayButton row={selected} size="sm" variant="outline" />
+                        <div className="flex items-center gap-2">
+                          <SaveRegressionButton row={selected} size="sm" variant="outline" />
+                          <ReplayButton row={selected} size="sm" variant="outline" />
+                        </div>
                       </div>
                       <pre className="rounded-md border border-border bg-surface-2 p-3 text-xs whitespace-pre-wrap overflow-x-auto">
                         {JSON.stringify(selected.messages, null, 2)}
