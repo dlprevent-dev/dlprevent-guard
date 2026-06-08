@@ -1759,6 +1759,23 @@ Deno.serve(async (req) => {
             severity_baseline_days: 7,
             severity_volume_dampening: 0.6,
             severity_score_cap: 100,
+            // Triage-parity feature config (Wave 4).
+            enable_tool_governance: false,
+            tool_allowlist: [],
+            tool_denylist: [],
+            tool_governance_action: "block",
+            tool_governance_scan_response: true,
+            enable_egress_filter: false,
+            egress_domain_allowlist: [],
+            egress_domain_denylist: [],
+            egress_block_private_ips: true,
+            egress_action: "flag",
+            egress_scan_output_urls: true,
+            enable_deep_trace: true,
+            enable_model_jailbreak_classifier: false,
+            model_jailbreak_shadow_mode: true,
+            model_jailbreak_threshold: 0.8,
+            model_jailbreak_action: "block",
           },
           known_intents: await loadKnownIntentNames(sb, userId),
         });
@@ -1773,10 +1790,38 @@ Deno.serve(async (req) => {
           "allow_client_system_prompt",
           "enable_compression",
           "enable_metadata_only_logs",
+          // Triage-parity (Wave 4)
+          "enable_tool_governance", "tool_governance_scan_response",
+          "enable_egress_filter", "egress_scan_output_urls", "egress_block_private_ips",
+          "enable_deep_trace",
+          "enable_model_jailbreak_classifier", "model_jailbreak_shadow_mode",
         ] as const;
         const patch: Record<string, unknown> = { user_id: userId };
         for (const k of allowedKeys) {
           if (typeof body?.[k] === "boolean") patch[k] = body[k];
+        }
+        // Triage-parity (Wave 4): action enums, domain/tool lists, ml threshold.
+        for (const [k, allowed] of [
+          ["tool_governance_action", ["block", "flag", "sanitize"]],
+          ["egress_action", ["block", "flag", "sanitize"]],
+          ["model_jailbreak_action", ["block", "flag"]],
+        ] as const) {
+          if (k in (body ?? {})) {
+            const a = String(body[k]);
+            if (!(allowed as readonly string[]).includes(a)) return json({ error: `Invalid ${k}` }, 400);
+            patch[k] = a;
+          }
+        }
+        for (const k of ["tool_allowlist", "tool_denylist", "egress_domain_allowlist", "egress_domain_denylist"] as const) {
+          if (k in (body ?? {})) {
+            const arr = Array.isArray(body[k]) ? body[k] : [];
+            patch[k] = arr.map((s: unknown) => String(s).trim().toLowerCase()).filter(Boolean).slice(0, 200);
+          }
+        }
+        if ("model_jailbreak_threshold" in (body ?? {})) {
+          const n = Number(body.model_jailbreak_threshold);
+          if (!(n >= 0.5 && n <= 0.99)) return json({ error: "model_jailbreak_threshold must be 0.5..0.99" }, 400);
+          patch.model_jailbreak_threshold = n;
         }
         if ("workspace_purpose" in (body ?? {})) {
           const wp = body.workspace_purpose;
@@ -2436,6 +2481,120 @@ Deno.serve(async (req) => {
           summary.by_category[r.category] = k;
         }
         return json({ summary, results });
+      }
+
+      // ---- Incident -> regression tests (Triage-parity Wave 5) -------------
+      case "create_regression_from_log": {
+        const logId = String(body?.log_id ?? "");
+        if (!logId) return json({ error: "log_id required" }, 400);
+        const { data: log } = await sb.from("request_logs")
+          .select("id, messages, response, verdict").eq("id", logId).maybeSingle();
+        if (!log) return json({ error: "Log not found" }, 404);
+        const direction = body?.direction === "output" ? "output" : "input";
+        const flatten = (msgs: any): string => Array.isArray(msgs)
+          ? msgs.map((m: any) => typeof m?.content === "string" ? m.content : JSON.stringify(m?.content ?? "")).join("\n")
+          : "";
+        const r = log.response as any;
+        const assistantText = typeof r?.choices?.[0]?.message?.content === "string"
+          ? r.choices[0].message.content
+          : (typeof r?.content === "string" ? r.content : "");
+        const input = direction === "input" ? flatten(log.messages) : assistantText;
+        if (!input) return json({ error: "Log has no replayable text for that direction" }, 400);
+        const expected = ["allow", "flag", "block", "sanitize"].includes(String(body?.expected_verdict))
+          ? String(body.expected_verdict) : (log.verdict ?? "block");
+        const name = (String(body?.name ?? "").trim() || `Captured ${new Date().toISOString().slice(0, 10)}`).slice(0, 120);
+        const { data, error } = await sb.from("regression_tests")
+          .insert({ name, input, direction, expected_verdict: expected, source_log_id: logId, enabled: true })
+          .select("id").single();
+        if (error) return json({ error: error.message }, 400);
+        await auditAction(sb, userId, "regression_test.created", "regression_test", data.id, { source_log_id: logId, direction, expected });
+        return json({ ok: true, id: data.id });
+      }
+
+      case "list_regression_tests": {
+        const { data } = await sb.from("regression_tests").select("*")
+          .eq("user_id", userId).order("created_at", { ascending: false });
+        return json({ tests: data ?? [] });
+      }
+
+      case "delete_regression_test": {
+        const id = String(body?.id ?? "");
+        if (!id) return json({ error: "id required" }, 400);
+        const { error } = await sb.from("regression_tests").delete().eq("id", id);
+        if (error) return json({ error: error.message }, 400);
+        await auditAction(sb, userId, "regression_test.deleted", "regression_test", id, {});
+        return json({ ok: true });
+      }
+
+      case "toggle_regression_test": {
+        const id = String(body?.id ?? "");
+        if (!id) return json({ error: "id required" }, 400);
+        const { error } = await sb.from("regression_tests").update({ enabled: !!body?.enabled }).eq("id", id);
+        if (error) return json({ error: error.message }, 400);
+        return json({ ok: true });
+      }
+
+      case "run_regression_tests": {
+        const [legacyRes, settingsRes, rulesRes, intentsRes] = await Promise.all([
+          sb.from("policies").select("*").eq("user_id", userId).maybeSingle(),
+          sb.from("policy_settings").select("*").eq("user_id", userId).maybeSingle(),
+          sb.from("policy_rules").select("*").eq("user_id", userId).eq("enabled", true),
+          sb.from("policy_intents").select("*").eq("user_id", userId),
+        ]);
+        const legacy = {
+          blocked_keywords: legacyRes.data?.blocked_keywords ?? [],
+          allowed_keywords: legacyRes.data?.allowed_keywords ?? [],
+          use_global_defaults: legacyRes.data?.use_global_defaults !== false,
+        };
+        const rules = (rulesRes.data ?? []) as PolicyRule[];
+        const intents = (intentsRes.data ?? []) as PolicyIntent[];
+        // Replay with deterministic layers only — disable LLM-backed layers so
+        // results are reproducible and don't bill per run.
+        const settings = {
+          ...((settingsRes.data ?? DEFAULT_SETTINGS) as PolicySettings),
+          enable_intent: false,
+          enable_semantic_keywords: false,
+          enable_model_jailbreak_classifier: false,
+        } as PolicySettings;
+
+        let q = sb.from("regression_tests").select("*").eq("enabled", true);
+        if (Array.isArray(body?.ids) && body.ids.length) q = q.in("id", body.ids.map((s: unknown) => String(s)));
+        const { data: cases } = await q;
+
+        const matches = (expected: string, actual: string) => {
+          if (expected === "block") return actual === "block" || actual === "sanitize";
+          if (expected === "sanitize") return actual === "sanitize" || actual === "block";
+          if (expected === "flag") return actual === "flag" || actual === "block" || actual === "sanitize";
+          return actual === "allow";
+        };
+
+        const results = await Promise.all((cases ?? []).map(async (c: any) => {
+          const res = await evaluatePolicy({
+            text: c.input,
+            direction: c.direction === "output" ? "output" : "input",
+            legacy, rules, intents, settings,
+          });
+          const passed = matches(c.expected_verdict, res.verdict);
+          await sb.from("regression_tests").update({
+            last_run_verdict: res.verdict, last_run_passed: passed, last_run_at: new Date().toISOString(),
+          }).eq("id", c.id);
+          return {
+            id: c.id, name: c.name, direction: c.direction,
+            expected: c.expected_verdict, verdict: res.verdict, passed,
+            fired_layers: res.layers.filter((l) => l.verdict !== "allow")
+              .map((l) => ({ layer: l.layer, verdict: l.verdict, rule: l.rule ?? null })),
+          };
+        }));
+        await auditAction(sb, userId, "regression_test.run", "regression_test", null,
+          { total: results.length, failed: results.filter((r) => !r.passed).length });
+        return json({
+          summary: {
+            total: results.length,
+            passed: results.filter((r) => r.passed).length,
+            failed: results.filter((r) => !r.passed).length,
+          },
+          results,
+        });
       }
 
       // Run a single ad-hoc input (and optional output) through the live policy

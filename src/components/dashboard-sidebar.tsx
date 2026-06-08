@@ -15,6 +15,7 @@ import {
   GitBranch,
   FlaskConical,
   ShieldQuestion,
+  ListChecks,
   Search,
   X,
 } from "lucide-react";
@@ -81,6 +82,7 @@ const groups: { id: string; label: string; items: NavItem[] }[] = [
       // everyday workflows. They confuse new users who just want to test.
       { to: "/dashboard/policies/sandbox", label: "Policy sandbox", icon: FlaskConical, advanced: true },
       { to: "/dashboard/policies/harness", label: "Policy harness", icon: ShieldQuestion, advanced: true },
+      { to: "/dashboard/policies/regression", label: "Regression tests", icon: ListChecks, advanced: true },
     ],
   },
 ];

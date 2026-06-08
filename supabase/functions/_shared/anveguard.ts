@@ -425,7 +425,8 @@ export function createTenantClient(sbClient: any, tenantId: string): any {
     "audit_logs",
     "model_aliases",
     "routes",
-    "route_steps"
+    "route_steps",
+    "regression_tests"
   ];
 
   return new Proxy(sbClient, {
