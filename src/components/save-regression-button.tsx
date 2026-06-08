@@ -24,7 +24,7 @@ export function SaveRegressionButton({
       call<{ ok: boolean; id: string }>("create_regression_from_log", {
         body: {
           log_id: row.id,
-          direction: "input",
+          // direction is derived server-side from the log's block side.
           expected_verdict:
             row.verdict ?? (String(row.status ?? "").startsWith("blocked") ? "block" : "allow"),
         },

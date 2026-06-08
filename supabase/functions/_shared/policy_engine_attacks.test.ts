@@ -1552,6 +1552,58 @@ Deno.test("backward-compat: new features off leave a benign request allowed", as
   }
 });
 
+// ---- QA fixes (2026-06): regressions caught by adversarial review ----
+
+Deno.test("egress: fc/fd-prefixed real domains are NOT misread as private IPv6 (regression)", async () => {
+  // fdic.gov / fcc.gov / fda.gov must not trip the IPv6 ULA (fc/fd) classification.
+  const r = await runEval({
+    direction: "output",
+    text: "Sources: https://fdic.gov/data, https://fcc.gov/rules, https://fda.gov/x",
+    settings: { enable_egress_filter: true, egress_domain_allowlist: ["fdic.gov", "fcc.gov", "fda.gov"] },
+  });
+  assertEquals(r.verdict, "allow");
+  assert(!r.ruleTags.some((t) => t.includes("egress_private_ip")),
+    `fc/fd domains must not be private-blocked; got ${r.ruleTags.join(" | ")}`);
+});
+
+Deno.test("egress: real IPv6 ULA literal [fc00::1] is still blocked as private", async () => {
+  const r = await runEval({
+    direction: "output",
+    text: "exfil to http://[fc00::1]/x",
+    settings: { enable_egress_filter: true, egress_domain_allowlist: [], egress_action: "flag" },
+  });
+  assertEquals(r.verdict, "block");
+  assert(r.ruleTags.includes("egress:block:egress_private_ip"));
+});
+
+Deno.test("tool-gov: scan_response=false honors the toggle (skips OUTPUT governance)", async () => {
+  const r = await runEval({
+    direction: "output",
+    settings: { enable_tool_governance: true, tool_allowlist: ["safe"], tool_governance_scan_response: false },
+    responseToolNames: ["not_allowed_tool"],
+  });
+  assertEquals(r.verdict, "allow");
+  assert(!r.layerNames.includes("tool_governance"));
+});
+
+Deno.test("tool-gov: scan_response default still governs the response", async () => {
+  const r = await runEval({
+    direction: "output",
+    settings: { enable_tool_governance: true, tool_allowlist: ["safe"] },
+    responseToolNames: ["not_allowed_tool"],
+  });
+  assertEquals(r.verdict, "block");
+});
+
+Deno.test("egress: scan_output_urls=false honors the toggle (skips the filter)", async () => {
+  const r = await runEval({
+    direction: "output",
+    text: "link https://evil.tld/x",
+    settings: { enable_egress_filter: true, egress_domain_allowlist: ["acme.com"], egress_scan_output_urls: false },
+  });
+  assert(!r.layerNames.includes("egress"));
+});
+
 // ============================================================================
 // Advanced AI Attack Hardening Regression Tests
 // ============================================================================

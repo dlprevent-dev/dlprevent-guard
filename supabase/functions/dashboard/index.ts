@@ -2488,16 +2488,23 @@ Deno.serve(async (req) => {
         const logId = String(body?.log_id ?? "");
         if (!logId) return json({ error: "log_id required" }, 400);
         const { data: log } = await sb.from("request_logs")
-          .select("id, messages, response, verdict").eq("id", logId).maybeSingle();
+          .select("id, messages, response, verdict, status").eq("id", logId).maybeSingle();
         if (!log) return json({ error: "Log not found" }, 404);
-        const direction = body?.direction === "output" ? "output" : "input";
+        // Derive the capture direction from the log's block side when the caller
+        // doesn't specify it — an output-blocked log must replay as "output",
+        // else it returns allow != block and the saved test is red on first run.
+        const direction = (body?.direction === "output" || body?.direction === "input")
+          ? body.direction
+          : (String((log as any).status ?? "").startsWith("blocked_output") ? "output" : "input");
         const flatten = (msgs: any): string => Array.isArray(msgs)
           ? msgs.map((m: any) => typeof m?.content === "string" ? m.content : JSON.stringify(m?.content ?? "")).join("\n")
           : "";
         const r = log.response as any;
         const assistantText = typeof r?.choices?.[0]?.message?.content === "string"
           ? r.choices[0].message.content
-          : (typeof r?.content === "string" ? r.content : "");
+          : Array.isArray(r?.content)  // Anthropic: content is an array of blocks
+            ? r.content.filter((b: any) => b?.type === "text").map((b: any) => b?.text ?? "").join("")
+            : (typeof r?.content === "string" ? r.content : "");
         const input = direction === "input" ? flatten(log.messages) : assistantText;
         if (!input) return json({ error: "Log has no replayable text for that direction" }, 400);
         const expected = ["allow", "flag", "block", "sanitize"].includes(String(body?.expected_verdict))

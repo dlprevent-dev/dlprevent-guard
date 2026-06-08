@@ -178,6 +178,14 @@ export interface PolicySettings {
   model_jailbreak_threshold?: number;
   /** Action when above threshold and not in shadow mode. */
   model_jailbreak_action?: "block" | "flag";
+
+  /** Also govern the tools the model INVOKES in its response, not just those
+   *  declared in the request. Default true. */
+  tool_governance_scan_response?: boolean;
+  /** Scan model OUTPUT text for URLs when the egress filter is on. Default true. */
+  egress_scan_output_urls?: boolean;
+  /** Populate deeper-trace fields (request_id, etc.) on request logs. Default true. */
+  enable_deep_trace?: boolean;
 }
 
 export interface LegacyPolicy {
@@ -2338,11 +2346,13 @@ export function evaluateToolGovernance(
 /** True if `host` is a private / loopback / link-local address or a
  *  non-routable internal name (SSRF + cloud-metadata exfil guard). */
 function isPrivateOrLoopbackHost(host: string): boolean {
-  const h = host.toLowerCase().replace(/\.$/, "");
+  const h = host.toLowerCase().replace(/\.$/, "").replace(/^\[|\]$/g, "");  // strip IPv6 brackets
   if (!h) return false;
   if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal")) return true;
   // IPv6 loopback (::1) / unspecified (::) / unique-local (fc,fd) / link-local (fe80)
-  if (h === "::1" || h === "::" || h.startsWith("fc") || h.startsWith("fd") || h.startsWith("fe80")) return true;
+  // IPv6 literals only (they contain ":"). Without this guard, real domains like
+  // fdic.gov / fcc.gov / fda.gov / fe80.example.com would be misread as private.
+  if (h.includes(":") && (h === "::1" || h === "::" || h.startsWith("fc") || h.startsWith("fd") || h.startsWith("fe80"))) return true;
   const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (m) {
     const o = m.slice(1).map(Number);
@@ -2531,7 +2541,10 @@ export async function evaluate(input: EvaluateInput, ctx: { systemPrompt?: strin
   // Tool-call governance — allow/deny which tools the model may use. Reads
   // tool names from ctx (declared on input, invoked on output). Opt-in.
   if (settings.enable_tool_governance === true) {
-    const names = direction === "input" ? ctx.toolNames : ctx.responseToolNames;
+    // Output-side governance honors the tool_governance_scan_response toggle.
+    const names = direction === "input"
+      ? ctx.toolNames
+      : (settings.tool_governance_scan_response !== false ? ctx.responseToolNames : undefined);
     const govLayers = evaluateToolGovernance(
       names ?? [], settings.tool_allowlist ?? [], settings.tool_denylist ?? [],
     );
@@ -2545,7 +2558,7 @@ export async function evaluate(input: EvaluateInput, ctx: { systemPrompt?: strin
 
   // Egress / outbound-domain allowlist — scan model OUTPUT for URLs to
   // disallowed or private hosts (exfil / SSRF). Opt-in, output direction only.
-  if (settings.enable_egress_filter === true && direction === "output") {
+  if (settings.enable_egress_filter === true && direction === "output" && settings.egress_scan_output_urls !== false) {
     const egressLayers = evaluateEgress(text, direction, {
       allowlist: settings.egress_domain_allowlist ?? [],
       denylist: settings.egress_domain_denylist ?? [],
@@ -2669,6 +2682,9 @@ export const DEFAULT_SETTINGS: PolicySettings = {
   enable_model_jailbreak_classifier: false,
   model_jailbreak_shadow_mode: true,
   model_jailbreak_threshold: 0.8,
+  tool_governance_scan_response: true,
+  egress_scan_output_urls: true,
+  enable_deep_trace: true,
 };
 
 export const KNOWN_INTENTS = [

@@ -1604,7 +1604,7 @@ async function handleRequest(req: Request): Promise<Response> {
   // intent classifier is disabled, in shadow mode, or returned no match).
   // Surfacing this on every log lets operators audit *why* an intent-scoped
   // rule did or didn't fire — a missing intent is a real, common reason.
-  const requestId = crypto.randomUUID();
+  const requestId = settings.enable_deep_trace !== false ? crypto.randomUUID() : null;
   const logBase: any = {
     user_id: keyRow.user_id,
     api_key_id: keyRow.id,
