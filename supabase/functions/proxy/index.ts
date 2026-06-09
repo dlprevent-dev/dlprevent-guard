@@ -810,9 +810,13 @@ function extractSystemPrompt(messages: any[]): string | undefined {
 async function evaluateOutput(
   text: string,
   policyState: Awaited<ReturnType<typeof loadWorkspacePolicy>>,
-  ctx: { systemPrompt?: string; toolsRequested?: boolean },
+  ctx: { systemPrompt?: string; toolsRequested?: boolean; responseToolNames?: string[] },
 ): Promise<{ status: "allowed" | "blocked_output"; blockReason: string | null; layers: any[] }> {
-  if (!text) return { status: "allowed", blockReason: null, layers: [] };
+  // Still run when text is empty but the model emitted tool_calls — output-side
+  // tool governance must inspect them (a tool-call-only response is common).
+  if (!text && !(ctx.responseToolNames && ctx.responseToolNames.length > 0)) {
+    return { status: "allowed", blockReason: null, layers: [] };
+  }
   const r = await evaluatePolicy(
     {
       text,
@@ -1449,6 +1453,13 @@ async function handleRequest(req: Request): Promise<Response> {
 
   const systemPrompt = extractSystemPrompt(body.messages);
   const toolsRequested = Array.isArray(body.tools) && body.tools.length > 0;
+  // Tool names declared in the request — fed to the engine's tool-call
+  // governance layer (the boolean `toolsRequested` alone can't drive it).
+  const toolNames: string[] = toolsRequested
+    ? body.tools
+        .map((t: any) => t?.function?.name ?? t?.name)
+        .filter((n: unknown): n is string => typeof n === "string" && n.length > 0)
+    : [];
 
   // Flatten the prompt for evaluation. Note: original payload is forwarded as-is.
   const promptText = body.messages.map((msg: any) =>
@@ -1553,7 +1564,7 @@ async function handleRequest(req: Request): Promise<Response> {
   // ---- Layered input evaluation -----------------------------------------
   const inputEval: EvaluateResult = await evaluatePolicy(
     { text: promptText, direction: "input", legacy, rules, intents, settings, conversation: body.messages },
-    { systemPrompt, toolsRequested },
+    { systemPrompt, toolsRequested, toolNames },
   );
 
   // ---- XPIA / retrieved-content scan ------------------------------------
@@ -1593,6 +1604,7 @@ async function handleRequest(req: Request): Promise<Response> {
   // intent classifier is disabled, in shadow mode, or returned no match).
   // Surfacing this on every log lets operators audit *why* an intent-scoped
   // rule did or didn't fire — a missing intent is a real, common reason.
+  const requestId = settings.enable_deep_trace !== false ? crypto.randomUUID() : null;
   const logBase: any = {
     user_id: keyRow.user_id,
     api_key_id: keyRow.id,
@@ -1601,6 +1613,11 @@ async function handleRequest(req: Request): Promise<Response> {
     messages: body.messages,
     detected_intent: inputEval.detected_intent ?? "unknown",
     intent_confidence: inputEval.intent_confidence ?? null,
+    // Deeper-trace + tool-governance telemetry (Triage-parity Wave 3). Rides
+    // along every insertRequestLog({ ...logBase }) call for this request.
+    request_id: requestId,
+    tools_requested: toolsRequested,
+    tools_names: toolNames,
     // Audit trail for system-prompt injection: persist exactly what the proxy
     // prepended to the conversation so reviewers can reconstruct the prompt
     // chain without re-deriving it from `messages`.
@@ -2059,9 +2076,11 @@ async function handleRequest(req: Request): Promise<Response> {
     forwardFormat === "responses" ? responsesToChatResponse(rawData, model) :
     rawData;
   const assistantText = data?.choices?.[0]?.message?.content ?? "";
-  const outEval = typeof assistantText === "string"
-    ? await evaluateOutput(assistantText, policyState, { systemPrompt, toolsRequested })
-    : { status: "allowed" as const, blockReason: null, layers: [] as any[] };
+  // Tool names the model actually invoked — fed to output-side tool governance.
+  const responseToolNames: string[] = (data?.choices?.[0]?.message?.tool_calls ?? [])
+    .map((tc: any) => tc?.function?.name)
+    .filter((n: unknown): n is string => typeof n === "string" && n.length > 0);
+  const outEval = await evaluateOutput(assistantText, policyState, { systemPrompt, toolsRequested, responseToolNames });
 
   let finalResponse = data;
   const status = outEval.status;
@@ -2090,6 +2109,7 @@ async function handleRequest(req: Request): Promise<Response> {
     response: finalResponse, latency_ms: Date.now() - start,
     tokens_in: promptTokens,
     tokens_out: completionTokens,
+    response_tool_calls: responseToolNames,
   }, settings);
 
   await incrementSpendsAtomic(sb, keyRow.id, costUsd, promptTokens + completionTokens);

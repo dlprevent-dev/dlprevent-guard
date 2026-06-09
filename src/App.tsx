@@ -28,6 +28,7 @@ import Alerts from "./pages/dashboard/Alerts";
 import Playground from "./pages/dashboard/Playground";
 import PolicySandbox from "./pages/dashboard/PolicySandbox";
 import PolicyHarness from "./pages/dashboard/PolicyHarness";
+import RegressionTests from "./pages/dashboard/RegressionTests";
 import SignInPage from "./pages/SignIn";
 import SignUpPage from "./pages/SignUp";
 import DocsLayout from "./pages/docs/DocsLayout";
@@ -79,6 +80,7 @@ const App = () => (
               <Route path="policies" element={<Policies />} />
               <Route path="policies/sandbox" element={<PolicySandbox />} />
               <Route path="policies/harness" element={<PolicyHarness />} />
+              <Route path="policies/regression" element={<RegressionTests />} />
               <Route path="logs" element={<Logs />} />
               <Route path="threats" element={<Threats />} />
               <Route path="alerts" element={<Alerts />} />
