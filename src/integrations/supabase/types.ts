@@ -530,23 +530,43 @@ export type Database = {
           behavioral_encoding_ratio_step: number
           behavioral_length_multiplier: number
           behavioral_persona_threshold: number
+          classifier_action: string
+          classifier_api_key: string | null
+          classifier_endpoint_url: string | null
+          classifier_shadow_mode: boolean
+          classifier_threshold: number
           compression_level: string
           compression_min_chars: number
           created_at: string
+          cross_tenant_action: string
+          egress_action: string
+          egress_block_private_ips: boolean
+          egress_domain_allowlist: string[]
+          egress_domain_denylist: string[]
+          egress_scan_output_urls: boolean
           enable_behavioral: boolean
           enable_compression: boolean
+          enable_cross_tenant_guard: boolean
+          enable_deep_trace: boolean
+          enable_egress_filter: boolean
           enable_fuzzy_keywords: boolean
           enable_heuristics: boolean
           enable_injection_guard: boolean
           enable_intent: boolean
+          enable_model_jailbreak_classifier: boolean
           enable_normalizer: boolean
           enable_patterns: boolean
           enable_pii_detection: boolean
           enable_semantic_keywords: boolean
+          enable_tool_governance: boolean
+          enable_trained_classifier: boolean
           guardrail_system_prompt: string | null
           injection_action: string
           intent_shadow_mode: boolean
           log_retention_days: number
+          model_jailbreak_action: string
+          model_jailbreak_shadow_mode: boolean
+          model_jailbreak_threshold: number
           pii_action: string
           semantic_threshold: number
           severity_baseline_days: number
@@ -561,6 +581,10 @@ export type Database = {
           token_spike_ratio: number
           token_spike_webhook_url: string | null
           token_spike_window_hours: number
+          tool_allowlist: string[]
+          tool_denylist: string[]
+          tool_governance_action: string
+          tool_governance_scan_response: boolean
           updated_at: string
           user_id: string
           workspace_purpose: string | null
@@ -573,23 +597,43 @@ export type Database = {
           behavioral_encoding_ratio_step?: number
           behavioral_length_multiplier?: number
           behavioral_persona_threshold?: number
+          classifier_action?: string
+          classifier_api_key?: string | null
+          classifier_endpoint_url?: string | null
+          classifier_shadow_mode?: boolean
+          classifier_threshold?: number
           compression_level?: string
           compression_min_chars?: number
           created_at?: string
+          cross_tenant_action?: string
+          egress_action?: string
+          egress_block_private_ips?: boolean
+          egress_domain_allowlist?: string[]
+          egress_domain_denylist?: string[]
+          egress_scan_output_urls?: boolean
           enable_behavioral?: boolean
           enable_compression?: boolean
+          enable_cross_tenant_guard?: boolean
+          enable_deep_trace?: boolean
+          enable_egress_filter?: boolean
           enable_fuzzy_keywords?: boolean
           enable_heuristics?: boolean
           enable_injection_guard?: boolean
           enable_intent?: boolean
+          enable_model_jailbreak_classifier?: boolean
           enable_normalizer?: boolean
           enable_patterns?: boolean
           enable_pii_detection?: boolean
           enable_semantic_keywords?: boolean
+          enable_tool_governance?: boolean
+          enable_trained_classifier?: boolean
           guardrail_system_prompt?: string | null
           injection_action?: string
           intent_shadow_mode?: boolean
           log_retention_days?: number
+          model_jailbreak_action?: string
+          model_jailbreak_shadow_mode?: boolean
+          model_jailbreak_threshold?: number
           pii_action?: string
           semantic_threshold?: number
           severity_baseline_days?: number
@@ -604,6 +648,10 @@ export type Database = {
           token_spike_ratio?: number
           token_spike_webhook_url?: string | null
           token_spike_window_hours?: number
+          tool_allowlist?: string[]
+          tool_denylist?: string[]
+          tool_governance_action?: string
+          tool_governance_scan_response?: boolean
           updated_at?: string
           user_id: string
           workspace_purpose?: string | null
@@ -616,23 +664,43 @@ export type Database = {
           behavioral_encoding_ratio_step?: number
           behavioral_length_multiplier?: number
           behavioral_persona_threshold?: number
+          classifier_action?: string
+          classifier_api_key?: string | null
+          classifier_endpoint_url?: string | null
+          classifier_shadow_mode?: boolean
+          classifier_threshold?: number
           compression_level?: string
           compression_min_chars?: number
           created_at?: string
+          cross_tenant_action?: string
+          egress_action?: string
+          egress_block_private_ips?: boolean
+          egress_domain_allowlist?: string[]
+          egress_domain_denylist?: string[]
+          egress_scan_output_urls?: boolean
           enable_behavioral?: boolean
           enable_compression?: boolean
+          enable_cross_tenant_guard?: boolean
+          enable_deep_trace?: boolean
+          enable_egress_filter?: boolean
           enable_fuzzy_keywords?: boolean
           enable_heuristics?: boolean
           enable_injection_guard?: boolean
           enable_intent?: boolean
+          enable_model_jailbreak_classifier?: boolean
           enable_normalizer?: boolean
           enable_patterns?: boolean
           enable_pii_detection?: boolean
           enable_semantic_keywords?: boolean
+          enable_tool_governance?: boolean
+          enable_trained_classifier?: boolean
           guardrail_system_prompt?: string | null
           injection_action?: string
           intent_shadow_mode?: boolean
           log_retention_days?: number
+          model_jailbreak_action?: string
+          model_jailbreak_shadow_mode?: boolean
+          model_jailbreak_threshold?: number
           pii_action?: string
           semantic_threshold?: number
           severity_baseline_days?: number
@@ -647,6 +715,10 @@ export type Database = {
           token_spike_ratio?: number
           token_spike_webhook_url?: string | null
           token_spike_window_hours?: number
+          tool_allowlist?: string[]
+          tool_denylist?: string[]
+          tool_governance_action?: string
+          tool_governance_scan_response?: boolean
           updated_at?: string
           user_id?: string
           workspace_purpose?: string | null
@@ -805,6 +877,69 @@ export type Database = {
         }
         Relationships: []
       }
+      regression_tests: {
+        Row: {
+          created_at: string
+          direction: string
+          enabled: boolean
+          expected_verdict: string
+          id: string
+          input: string
+          last_run_at: string | null
+          last_run_passed: boolean | null
+          last_run_verdict: string | null
+          name: string
+          source_log_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          direction?: string
+          enabled?: boolean
+          expected_verdict: string
+          id?: string
+          input: string
+          last_run_at?: string | null
+          last_run_passed?: boolean | null
+          last_run_verdict?: string | null
+          name: string
+          source_log_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          direction?: string
+          enabled?: boolean
+          expected_verdict?: string
+          id?: string
+          input?: string
+          last_run_at?: string | null
+          last_run_passed?: boolean | null
+          last_run_verdict?: string | null
+          name?: string
+          source_log_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "regression_tests_source_log_id_fkey"
+            columns: ["source_log_id"]
+            isOneToOne: false
+            referencedRelation: "request_logs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "regression_tests_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["clerk_user_id"]
+          },
+        ]
+      }
       request_logs: {
         Row: {
           api_key_id: string | null
@@ -813,6 +948,8 @@ export type Database = {
           compression_applied: boolean
           created_at: string
           detected_intent: string | null
+          egress_allowed: boolean | null
+          egress_domain: string | null
           guardrail_prompt: string | null
           id: string
           intent_confidence: number | null
@@ -820,11 +957,17 @@ export type Database = {
           messages: Json | null
           model: string | null
           provider: string
+          request_id: string | null
           response: Json | null
+          response_tool_calls: string[] | null
           status: string
           tokens_in: number | null
           tokens_out: number | null
           tokens_saved_estimate: number | null
+          tool_governance_verdict: string | null
+          tools_names: string[] | null
+          tools_requested: boolean | null
+          upstream_latency_ms: number | null
           user_id: string
           verdict: string | null
           verdict_layers: Json | null
@@ -836,6 +979,8 @@ export type Database = {
           compression_applied?: boolean
           created_at?: string
           detected_intent?: string | null
+          egress_allowed?: boolean | null
+          egress_domain?: string | null
           guardrail_prompt?: string | null
           id?: string
           intent_confidence?: number | null
@@ -843,11 +988,17 @@ export type Database = {
           messages?: Json | null
           model?: string | null
           provider: string
+          request_id?: string | null
           response?: Json | null
+          response_tool_calls?: string[] | null
           status: string
           tokens_in?: number | null
           tokens_out?: number | null
           tokens_saved_estimate?: number | null
+          tool_governance_verdict?: string | null
+          tools_names?: string[] | null
+          tools_requested?: boolean | null
+          upstream_latency_ms?: number | null
           user_id: string
           verdict?: string | null
           verdict_layers?: Json | null
@@ -859,6 +1010,8 @@ export type Database = {
           compression_applied?: boolean
           created_at?: string
           detected_intent?: string | null
+          egress_allowed?: boolean | null
+          egress_domain?: string | null
           guardrail_prompt?: string | null
           id?: string
           intent_confidence?: number | null
@@ -866,11 +1019,17 @@ export type Database = {
           messages?: Json | null
           model?: string | null
           provider?: string
+          request_id?: string | null
           response?: Json | null
+          response_tool_calls?: string[] | null
           status?: string
           tokens_in?: number | null
           tokens_out?: number | null
           tokens_saved_estimate?: number | null
+          tool_governance_verdict?: string | null
+          tools_names?: string[] | null
+          tools_requested?: boolean | null
+          upstream_latency_ms?: number | null
           user_id?: string
           verdict?: string | null
           verdict_layers?: Json | null
