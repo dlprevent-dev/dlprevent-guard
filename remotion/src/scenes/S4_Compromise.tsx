@@ -12,6 +12,33 @@ const STEPS = [
   { kind: "call",   text: "→ tool.fs.read('~/.env')" },
 ];
 
+type BlastStatT = { label: string; value: string; tone: string; delay: number };
+
+const BLAST_STATS: BlastStatT[] = [
+  { label: "secrets exposed",    value: "247 KB",       tone: C.alert, delay: 64 },
+  { label: "exfil destination",  value: "attacker.tld", tone: C.paper, delay: 80 },
+  { label: "tools chained",      value: "3",            tone: C.paper, delay: 96 },
+  { label: "time to breach",     value: "≈1.4 s",       tone: C.alert, delay: 112 },
+];
+
+// Extracted into its own component so useEnter() runs in a component body, not
+// inside a .map() callback (react-hooks/rules-of-hooks).
+const BlastStat: React.FC<{ stat: BlastStatT }> = ({ stat }) => {
+  const e = useEnter(stat.delay);
+  return (
+    <div style={{
+      ...e,
+      background: C.panel,
+      border: `1px solid ${C.rule}`,
+      borderRadius: 10,
+      padding: "16px 18px",
+    }}>
+      <div style={{ fontFamily: FONTS.mono, fontSize: 12, color: C.muted, letterSpacing: 2, textTransform: "uppercase" }}>{stat.label}</div>
+      <div style={{ fontSize: 36, fontWeight: 600, color: stat.tone, letterSpacing: -0.6, marginTop: 4 }}>{stat.value}</div>
+    </div>
+  );
+};
+
 export const S4_Compromise: React.FC = () => {
   const f = useCurrentFrame();
   const panel = useEnter(8);
@@ -62,26 +89,9 @@ export const S4_Compromise: React.FC = () => {
           <div style={{ ...useEnter(50) }}>
             <Mono size={13} color={C.muted}>blast radius (predicted)</Mono>
           </div>
-          {[
-            { label: "secrets exposed",     value: "247 KB",    tone: C.alert, delay: 64 },
-            { label: "exfil destination",  value: "attacker.tld", tone: C.paper, delay: 80 },
-            { label: "tools chained",      value: "3",         tone: C.paper, delay: 96 },
-            { label: "time to breach",     value: "≈1.4 s",    tone: C.alert, delay: 112 },
-          ].map((t, i) => {
-            const e = useEnter(t.delay);
-            return (
-              <div key={i} style={{
-                ...e,
-                background: C.panel,
-                border: `1px solid ${C.rule}`,
-                borderRadius: 10,
-                padding: "16px 18px",
-              }}>
-                <div style={{ fontFamily: FONTS.mono, fontSize: 12, color: C.muted, letterSpacing: 2, textTransform: "uppercase" }}>{t.label}</div>
-                <div style={{ fontSize: 36, fontWeight: 600, color: t.tone, letterSpacing: -0.6, marginTop: 4 }}>{t.value}</div>
-              </div>
-            );
-          })}
+          {BLAST_STATS.map((stat, i) => (
+            <BlastStat key={i} stat={stat} />
+          ))}
         </div>
       </div>
     </AbsoluteFill>
