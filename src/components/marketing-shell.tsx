@@ -51,7 +51,7 @@ export const MarketingShell = ({ children }: { children: ReactNode }) => (
       <div className="mx-auto max-w-6xl px-4 md:px-6 py-5 flex flex-col sm:flex-row items-center sm:justify-between gap-2 text-meta text-muted-foreground">
         <div className="flex items-center gap-3">
           <Logo size={20} />
-          <span>© {new Date().getFullYear()} AnveGuard · Apache 2.0</span>
+          <span>© {new Date().getFullYear()} AnveGuard by <a href="https://citerlabs.com" target="_blank" rel="noreferrer" className="hover:text-foreground transition-colors">CiterLabs</a> · Apache 2.0</span>
         </div>
         <div className="flex items-center gap-4">
           <Link to="/mcp" className="hover:text-foreground transition-colors">MCP</Link>
