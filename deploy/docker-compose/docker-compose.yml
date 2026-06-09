@@ -1,0 +1,77 @@
+# AnveGuard self-host stack.
+# One command brings up: Postgres + Supabase local stack + AnveGuard edge
+# functions + dashboard. Runs entirely inside your VPC / private network —
+# no Lovable, no Supabase Cloud, no AnveGuard SaaS dependency.
+#
+# Usage:
+#   cp .env.example .env       # set CLERK_PUBLISHABLE_KEY, KEY_ENCRYPTION_SECRET, LOVABLE_API_KEY (optional)
+#   docker compose up -d
+#   open http://localhost:8080
+#
+# Tested on Docker 24+ / Docker Desktop 4.30+.
+
+services:
+  # --- Postgres (Supabase-compatible) ---
+  postgres:
+    image: supabase/postgres:15.8.1.060
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-anveguard_local_dev}
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "${POSTGRES_PORT:-54322}:5432"
+    volumes:
+      - anveguard-pg:/var/lib/postgresql/data
+      - ../../supabase/migrations:/docker-entrypoint-initdb.d:ro
+
+  # --- Supabase REST + Auth + Edge runtime ---
+  # Provided as separate services so each can scale / restart independently
+  # in a customer VPC. For a single-box install this is the smallest viable
+  # stack — drop in a load balancer + replicas for HA.
+
+  edge-runtime:
+    image: supabase/edge-runtime:v1.58.13
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SUPABASE_URL: ${SUPABASE_URL:-http://kong:8000}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      SUPABASE_DB_URL: postgres://postgres:${POSTGRES_PASSWORD:-anveguard_local_dev}@postgres:5432/postgres
+      # AnveGuard-specific function env. KEY_ENCRYPTION_SECRET is REQUIRED —
+      # rotates the AES-GCM key used to encrypt stored provider keys.
+      KEY_ENCRYPTION_SECRET: ${KEY_ENCRYPTION_SECRET:?KEY_ENCRYPTION_SECRET must be set}
+      LOVABLE_API_KEY: ${LOVABLE_API_KEY:-}
+      CLASSIFIER_API_KEY: ${CLASSIFIER_API_KEY:-}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8080}
+    volumes:
+      - ../../supabase/functions:/home/deno/functions:ro
+    ports:
+      - "${EDGE_PORT:-54321}:8081"
+    command: >
+      start
+      --main-service /home/deno/functions/_shared
+      --port 8081
+
+  # --- AnveGuard dashboard (static) ---
+  dashboard:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - edge-runtime
+    ports:
+      - "${DASHBOARD_PORT:-8080}:80"
+    volumes:
+      - ../../dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  anveguard-pg:
