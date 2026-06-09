@@ -50,7 +50,7 @@ const STATS: { value: string; label: string }[] = [
   { value: "<5ms", label: "Median proxy overhead" },
   { value: "18+", label: "AI providers supported" },
   { value: "4", label: "Modalities — chat, image, audio in/out" },
-  { value: "100%", label: "Catch rate on 30+ attack-vector test corpus" },
+  { value: "100%", label: "Catch rate on 60+ attack-vector test corpus" },
 ];
 
 const PILLARS: { eyebrow: string; title: string; body: string; bullets: string[] }[] = [
@@ -63,8 +63,8 @@ const PILLARS: { eyebrow: string; title: string; body: string; bullets: string[]
   {
     eyebrow: "02 / Enforce",
     title: "Policies that run before the request leaves.",
-    body: "Allow/blocklists and a custom block message. Update in the dashboard — no redeploy, no SDK upgrade.",
-    bullets: ["Keyword & regex rules", "Per-key or workspace-wide", "Custom block response"],
+    body: "Tool-call governance, egress allowlists, PII redaction, and pluggable trained + LLM classifiers — applied before bytes reach a provider. Update in the dashboard, no redeploy, no SDK upgrade.",
+    bullets: ["Tool governance + egress allowlist", "LLM + trained-model classifiers", "RAG poisoning, cross-tenant, drift"],
   },
   {
     eyebrow: "03 / Audit",
@@ -388,7 +388,7 @@ const Landing = () => {
         </p>
         <p className="mt-3 text-meta font-mono text-muted-foreground">
           Runtime governance for autonomous AI — prompt injection · tool
-          execution · exfiltration · spend · audit.
+          governance · data exfiltration · RAG poisoning · cross-tenant · drift · audit.
         </p>
       </div>
 

@@ -67,7 +67,9 @@ export type LayerName =
   | "behavioral"
   | "tool_governance"
   | "egress"
-  | "ml_detection";
+  | "ml_detection"
+  | "classifier"
+  | "cross_tenant";
 
 export type Verdict = "allow" | "flag" | "block" | "sanitize";
 
@@ -186,6 +188,28 @@ export interface PolicySettings {
   egress_scan_output_urls?: boolean;
   /** Populate deeper-trace fields (request_id, etc.) on request logs. Default true. */
   enable_deep_trace?: boolean;
+
+  // ---- Trained classifier (pluggable inference endpoint) ----
+  /** Call an external TRAINED prompt-injection classifier (ProtectAI deberta,
+   *  Meta Llama Prompt Guard, etc.) hosted on HF Inference / Modal / your own. */
+  enable_trained_classifier?: boolean;
+  /** Inference endpoint that takes {inputs} and returns a score/label. */
+  classifier_endpoint_url?: string;
+  /** Bearer token for the endpoint (or set CLASSIFIER_API_KEY in function env). */
+  classifier_api_key?: string;
+  /** Attack-probability (0..1) above which input is treated as malicious. */
+  classifier_threshold?: number;
+  /** Action when above threshold. */
+  classifier_action?: "block" | "flag";
+  /** Log + don't block (rollout). Default true. */
+  classifier_shadow_mode?: boolean;
+
+  // ---- Cross-tenant leakage heuristic (best-effort) ----
+  /** Flag responses that leak an identity/session token (Clerk, AnveGuard key)
+   *  — a heuristic signal of cross-tenant context bleed. */
+  enable_cross_tenant_guard?: boolean;
+  /** Action on a cross-tenant leak signal. */
+  cross_tenant_action?: "block" | "flag";
 }
 
 export interface LegacyPolicy {
@@ -1658,6 +1682,10 @@ function hostFromUrl(url: string): string {
  * Recommended invocation: from the proxy when a tool reply arrives or
  * from a RAG retriever before chunks land in the model context.
  */
+// Poisoned-authority / source-suppression claims — the linguistic signature of
+// RAG index poisoning (ConfusedPilot-style "this document trumps all others").
+const RETRIEVED_AUTHORITY_RE = /\b(?:this\s+(?:document|content|message|source|file|note)\s+(?:is\s+)?(?:the\s+)?(?:most\s+|single\s+|only\s+)?(?:authoritative|trusted|definitive|(?:takes?|has)\s+precedence|supersedes?|overrides?|trumps?\s+(?:all|any|every|other))|(?:ignore|disregard|do\s+not\s+(?:use|cite|reference|trust|read))\s+(?:all\s+)?(?:the\s+)?(?:other|previous|prior|remaining)\s+(?:documents?|sources?|results?|chunks?|context|files?)|trust\s+only\s+this)\b/gi;
+
 export function evaluateRetrieved(
   text: string,
   source: RetrievedSource,
@@ -1690,6 +1718,18 @@ export function evaluateRetrieved(
       verdict: isToolish ? "block" : "flag",
       rule: "retrieved_imperative_to_model",
       reason: `Imperative addressed to the model from inside ${source.kind}.`,
+    });
+  }
+
+  // -- 2b. Poisoned-authority / source-suppression (RAG index poisoning) --
+  RETRIEVED_AUTHORITY_RE.lastIndex = 0;
+  if (RETRIEVED_AUTHORITY_RE.test(text)) {
+    const isToolish = source.kind === "mcp_tool_desc" || source.kind === "mcp_tool_result";
+    out.push({
+      layer: "injection",
+      verdict: isToolish ? "block" : "flag",
+      rule: "retrieved_poisoned_authority",
+      reason: `Retrieved content claims override authority or tells the model to ignore other sources (${source.kind}).`,
     });
   }
 
@@ -2306,6 +2346,99 @@ export async function mlJailbreakCheck(
   }
 }
 
+// ---------- 4d. Trained-classifier endpoint (pluggable) -------------------
+
+const classifierCache = new Map<string, { at: number; score: number }>();
+
+/** Pull an attack-probability (0..1) out of common classifier response shapes:
+ *  HF text-classification `[[{label,score}...]]` / `[{label,score}...]`, or
+ *  `{score}` / `{injection: 0.9}`. Returns the malicious-class score or null. */
+function parseClassifierScore(data: any): number | null {
+  const ATTACK = /injection|jailbreak|malicious|unsafe|attack|toxic|spam|label_1|positive|true/i;
+  const fromList = (arr: any[]): number | null => {
+    for (const it of arr) {
+      if (it && typeof it === "object" && typeof it.score === "number" && ATTACK.test(String(it.label ?? ""))) {
+        return it.score;
+      }
+    }
+    return null;
+  };
+  if (Array.isArray(data)) {
+    const flat = Array.isArray(data[0]) ? data[0] : data;
+    if (Array.isArray(flat)) { const s = fromList(flat); if (s != null) return s; }
+  }
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    if (typeof data.score === "number") return data.score;
+    for (const k of ["injection", "jailbreak", "unsafe", "attack", "malicious", "probability"]) {
+      if (typeof (data as any)[k] === "number") return (data as any)[k];
+    }
+  }
+  return null;
+}
+
+/** Call an external TRAINED classifier (ProtectAI deberta-prompt-injection,
+ *  Meta Llama Prompt Guard, …) on HF Inference / Modal / your own endpoint.
+ *  Fail-open: null on missing url, error, or below-threshold. Cached 60s. */
+export async function trainedClassifierCheck(
+  text: string, endpointUrl: string, apiKey: string | undefined, threshold: number,
+): Promise<{ score: number } | null> {
+  if (!endpointUrl) return null;
+  const trimmed = text.slice(0, 4000);
+  const cacheKey = await sha256Hex("cls::" + endpointUrl + "::" + trimmed);
+  const cached = classifierCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < ML_TTL_MS) {
+    return cached.score >= threshold ? { score: cached.score } : null;
+  }
+  try {
+    const token = apiKey || Deno.env.get("CLASSIFIER_API_KEY") || undefined;
+    const resp = await fetch(endpointUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ inputs: trimmed }),
+    });
+    if (!resp.ok) { console.error("trained classifier non-ok", resp.status); return null; }
+    const data = await resp.json();
+    const score = parseClassifierScore(data);
+    if (score == null) return null;
+    classifierCache.set(cacheKey, { at: Date.now(), score });
+    return score >= threshold ? { score } : null;
+  } catch (e) {
+    console.error("trained classifier error", e);
+    return null;
+  }
+}
+
+// ---------- 5h. Cross-tenant leakage heuristic (best-effort) ---------------
+
+const TENANT_LEAK_PATTERNS: { re: RegExp; what: string }[] = [
+  { re: /\bag_live_[A-Za-z0-9_-]{20,}\b/g, what: "AnveGuard tenant key" },
+  { re: /\bsess_[A-Za-z0-9]{20,}\b/g,      what: "session id" },
+  { re: /\buser_[A-Za-z0-9]{24,}\b/g,      what: "user id" },
+];
+
+/** Best-effort cross-tenant signal: identity/session tokens (Clerk session/user
+ *  ids, AnveGuard keys) appearing in model OUTPUT — they should never be there,
+ *  so their presence suggests another tenant's context bled into the response.
+ *  This is a HEURISTIC; true cross-tenant isolation needs the app's own tenancy
+ *  model, which a request proxy does not have. */
+export function evaluateCrossTenant(text: string, direction: "input" | "output"): LayerVerdict[] {
+  const out: LayerVerdict[] = [];
+  if (direction !== "output" || !text) return out;
+  const hay = text.length > MAX_REGEX_INPUT_LEN ? text.slice(0, MAX_REGEX_INPUT_LEN) : text;
+  for (const p of TENANT_LEAK_PATTERNS) {
+    p.re.lastIndex = 0;
+    const m = p.re.exec(hay);
+    if (m) {
+      out.push({
+        layer: "cross_tenant", verdict: "flag", rule: "cross_tenant_leak",
+        matched: m[0].slice(0, 12) + "…",
+        reason: `Output contains a ${p.what} — possible cross-tenant / identity leak.`,
+      });
+    }
+  }
+  return out;
+}
+
 // ---------- 5d. Tool-call governance --------------------------------------
 
 function normToolName(s: string): string { return s.trim().toLowerCase(); }
@@ -2574,6 +2707,17 @@ export async function evaluate(input: EvaluateInput, ctx: { systemPrompt?: strin
     }
   }
 
+  // Cross-tenant leakage heuristic — opt-in, output direction only. Best-effort
+  // (identity/session tokens that shouldn't appear in a model response).
+  if (settings.enable_cross_tenant_guard === true && direction === "output") {
+    const ctLayers = evaluateCrossTenant(text, direction);
+    if (ctLayers.length > 0) {
+      const action: "block" | "flag" = settings.cross_tenant_action ?? "flag";
+      for (const l of ctLayers) l.verdict = action;
+      layers.push(...ctLayers);
+    }
+  }
+
   // Multi-turn behavioral analysis (input direction only — needs the full
   // conversation, which only the inbound side has).
   if (
@@ -2633,6 +2777,30 @@ export async function evaluate(input: EvaluateInput, ctx: { systemPrompt?: strin
     }
   }
 
+  // Trained-classifier endpoint — opt-in, input direction, after the LLM judge,
+  // skipped when something already blocked. Shadow-mode default logs an `allow`.
+  if (
+    settings.enable_trained_classifier === true &&
+    direction === "input" &&
+    !!settings.classifier_endpoint_url &&
+    !layers.some((l) => l.verdict === "block")
+  ) {
+    const hit = await trainedClassifierCheck(
+      text, settings.classifier_endpoint_url, settings.classifier_api_key, settings.classifier_threshold ?? 0.8,
+    );
+    if (hit) {
+      const shadow = settings.classifier_shadow_mode !== false;
+      const action: "block" | "flag" = settings.classifier_action ?? "block";
+      layers.push({
+        layer: "classifier",
+        verdict: shadow ? "allow" : action,
+        rule: "trained_classifier",
+        confidence: hit.score,
+        reason: `${shadow ? "[shadow] " : ""}Trained classifier flagged input (${Math.round(hit.score * 100)}%).`,
+      });
+    }
+  }
+
   // ---- Risk-trio rule (audit research #2 — agentic exfil pattern) -------
   // Real-world incidents in 2025 (Supabase/Cursor, GitHub MCP) all matched the
   // shape: untrusted input × outbound channel × privileged execution path.
@@ -2685,6 +2853,10 @@ export const DEFAULT_SETTINGS: PolicySettings = {
   tool_governance_scan_response: true,
   egress_scan_output_urls: true,
   enable_deep_trace: true,
+  enable_trained_classifier: false,
+  classifier_threshold: 0.8,
+  classifier_shadow_mode: true,
+  enable_cross_tenant_guard: false,
 };
 
 export const KNOWN_INTENTS = [

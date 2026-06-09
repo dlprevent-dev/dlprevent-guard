@@ -8,7 +8,7 @@ import { KnownIntentsSection } from "@/components/policies/known-intents-section
 import { GuardrailsSection } from "@/components/policies/guardrails-section";
 import { CompressionSection } from "@/components/policies/compression-section";
 import { TokenAlertsSection } from "@/components/policies/token-alerts-section";
-import { ToolGovernanceSection, EgressSection, ModelClassifierSection } from "@/components/policies/governance-sections";
+import { ToolGovernanceSection, EgressSection, ModelClassifierSection, AdvancedDetectionSection } from "@/components/policies/governance-sections";
 import { ChevronDown, FlaskConical, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +19,7 @@ const SECTIONS = [
   { id: "tool-governance", label: "Tool governance", hint: "Allow / deny which tools the model calls", Component: ToolGovernanceSection },
   { id: "egress",      label: "Egress allowlist",  hint: "Restrict outbound domains + block SSRF",  Component: EgressSection },
   { id: "model-classifier", label: "Model classifier", hint: "Optional LLM jailbreak detector",     Component: ModelClassifierSection },
+  { id: "advanced",    label: "Advanced detection", hint: "Trained classifier + cross-tenant guard", Component: AdvancedDetectionSection },
   { id: "compression", label: "Compression",       hint: "Trim noisy prompts before forwarding",   Component: CompressionSection },
   { id: "alerts",      label: "Alerts",            hint: "Get notified on block / token spikes",   Component: TokenAlertsSection },
   { id: "templates",   label: "Templates",         hint: "Saved policy bundles you can re-apply",  Component: PolicyTemplatesSection },
@@ -34,6 +35,7 @@ const DEFAULT_OPEN: Record<SectionId, boolean> = {
   "tool-governance": false,
   egress: false,
   "model-classifier": false,
+  advanced: false,
   compression: false,
   alerts: false,
   templates: false,
