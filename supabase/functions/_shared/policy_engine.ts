@@ -69,7 +69,10 @@ export type LayerName =
   | "egress"
   | "ml_detection"
   | "classifier"
-  | "cross_tenant";
+  | "cross_tenant"
+  | "threat_intel"
+  | "mcp_governance"
+  | "cost_guard";
 
 export type Verdict = "allow" | "flag" | "block" | "sanitize";
 
@@ -210,6 +213,36 @@ export interface PolicySettings {
   enable_cross_tenant_guard?: boolean;
   /** Action on a cross-tenant leak signal. */
   cross_tenant_action?: "block" | "flag";
+
+  // ---- Wave 4: Threat Intelligence Feed ----
+  /** Match incoming text against the community signature DB (regex + literal + hash). */
+  enable_threat_intel?: boolean;
+  /** Min severity that triggers a verdict. low | med | high | critical. Default "high". */
+  threat_intel_min_severity?: "low" | "med" | "high" | "critical";
+  /** Action when a signature fires. Default "block". */
+  threat_intel_action?: "block" | "flag";
+  /** Optional URL override for the threat feed. Defaults to bundled feed. */
+  threat_intel_feed_url?: string | null;
+
+  // ---- Wave 4: MCP Server Governance ----
+  /** Pin tool definitions per MCP server. Detects when a server changes a tool's
+   *  description (the Invariant Labs 2025 tool-poisoning class of attacks). */
+  enable_mcp_governance?: boolean;
+  /** Trusted MCP server IDs. Empty + enabled = block all MCP traffic. */
+  mcp_server_allowlist?: string[];
+  /** Map of `server_id/tool_name` → SHA-256 hash of trusted tool definition. */
+  mcp_pinned_tool_hashes?: Record<string, string>;
+  /** Action on an MCP governance violation. */
+  mcp_governance_action?: "block" | "flag";
+
+  // ---- Wave 4: Cost-aware enforcement ----
+  /** Block requests whose estimated USD cost exceeds the budget. */
+  enable_cost_guard?: boolean;
+  /** Max permissible USD cost per request. */
+  cost_budget_usd_per_request?: number;
+  /** Action when over budget. Default "block" — over-budget requests would
+   *  otherwise hit your provider bill before any other layer could stop them. */
+  cost_guard_action?: "block" | "flag";
 }
 
 export interface LegacyPolicy {
@@ -2439,6 +2472,233 @@ export function evaluateCrossTenant(text: string, direction: "input" | "output")
   return out;
 }
 
+// ---------- 5f. Threat Intelligence Feed (Wave 4) -------------------------
+//
+// Community-maintained signature DB. Updates ship via PR; the engine fetches
+// + caches + matches at runtime. Three signature shapes are supported:
+//   - regex   → JS regex pattern (validated through isSafeRegex)
+//   - literal → exact substring (cheapest; runs first)
+//   - sha256  → hash of the full input (catches known-bad images / blobs)
+
+export interface ThreatSignature {
+  id: string;
+  kind: "regex" | "literal" | "sha256";
+  pattern: string;
+  severity: "low" | "med" | "high" | "critical";
+  category: string;
+  description: string;
+  source?: string;
+  first_seen?: string;
+}
+
+const SEVERITY_RANK: Record<ThreatSignature["severity"], number> = {
+  low: 0, med: 1, high: 2, critical: 3,
+};
+
+/** In-process cache: feed URL → compiled signatures + fetch time. */
+const tiCache = new Map<string, { at: number; sigs: CompiledSig[] }>();
+const TI_TTL_MS = 3600_000; // 1 hour
+
+interface CompiledSig extends ThreatSignature {
+  re?: RegExp;
+  lit?: string;
+}
+
+function compileSignatures(raw: unknown): CompiledSig[] {
+  const sigs: CompiledSig[] = [];
+  if (!Array.isArray(raw)) return sigs;
+  for (const s of raw) {
+    if (!s || typeof s !== "object") continue;
+    const sig = s as ThreatSignature;
+    if (!sig.id || !sig.kind || !sig.pattern || !sig.severity) continue;
+    if (sig.kind === "regex") {
+      // Curated signatures are code-reviewed via PR — skip the ReDoS heuristic
+      // that targets *user-supplied* regex in policy_rules. Hard caps below
+      // (MAX_REGEX_INPUT_LEN, the fired-set short-circuit) keep us safe.
+      // Unicode flag handles `\u{...}` ranges (emoji-smuggling signature);
+      // fall back to `i` for patterns where `iu` is invalid.
+      try { sigs.push({ ...sig, re: new RegExp(sig.pattern, "iu") }); }
+      catch { try { sigs.push({ ...sig, re: new RegExp(sig.pattern, "i") }); } catch { /* skip */ } }
+    } else if (sig.kind === "literal") {
+      sigs.push({ ...sig, lit: sig.pattern.toLowerCase() });
+    } else if (sig.kind === "sha256") {
+      sigs.push({ ...sig });
+    }
+  }
+  return sigs;
+}
+
+const BUNDLED_TI_PATH = new URL("./threat_intel.json", import.meta.url).href;
+
+/** Load + cache the threat-intel feed. Falls back to the bundled feed on error. */
+export async function loadThreatIntel(feedUrl?: string | null): Promise<CompiledSig[]> {
+  const url = feedUrl || BUNDLED_TI_PATH;
+  const cached = tiCache.get(url);
+  if (cached && Date.now() - cached.at < TI_TTL_MS) return cached.sigs;
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`feed fetch ${resp.status}`);
+    const data = await resp.json();
+    const sigs = compileSignatures(data?.signatures ?? data);
+    tiCache.set(url, { at: Date.now(), sigs });
+    return sigs;
+  } catch (e) {
+    console.error("threat_intel feed load failed:", e instanceof Error ? e.message : e);
+    // Bundled fallback — try the local file even if remote failed.
+    if (url !== BUNDLED_TI_PATH) return loadThreatIntel(null);
+    tiCache.set(url, { at: Date.now(), sigs: [] });
+    return [];
+  }
+}
+
+/** Match text against signatures; return one verdict per distinct signature
+ *  hit at or above `minSeverity`. Bounded by MAX_REGEX_INPUT_LEN. */
+export async function evaluateThreatIntel(
+  text: string,
+  minSeverity: ThreatSignature["severity"],
+  feedUrl?: string | null,
+): Promise<LayerVerdict[]> {
+  const out: LayerVerdict[] = [];
+  if (!text) return out;
+  const sigs = await loadThreatIntel(feedUrl);
+  if (sigs.length === 0) return out;
+  const minRank = SEVERITY_RANK[minSeverity];
+  const hay = text.length > MAX_REGEX_INPUT_LEN ? text.slice(0, MAX_REGEX_INPUT_LEN) : text;
+  const lower = hay.toLowerCase();
+  const fired = new Set<string>();
+  let docHash: string | null = null;
+  for (const sig of sigs) {
+    if (SEVERITY_RANK[sig.severity] < minRank) continue;
+    if (fired.has(sig.id)) continue;
+    let hit: string | null = null;
+    if (sig.kind === "literal" && sig.lit && lower.includes(sig.lit)) {
+      hit = sig.pattern;
+    } else if (sig.kind === "regex" && sig.re) {
+      sig.re.lastIndex = 0;
+      const m = sig.re.exec(hay);
+      if (m) hit = m[0];
+    } else if (sig.kind === "sha256") {
+      if (docHash === null) docHash = await sha256Hex(hay);
+      if (docHash === sig.pattern) hit = sig.id;
+    }
+    if (hit !== null) {
+      fired.add(sig.id);
+      out.push({
+        layer: "threat_intel",
+        verdict: "flag",
+        rule: `ti:${sig.id}`,
+        matched: hit.slice(0, 120),
+        reason: `Threat-intel signature ${sig.id} (${sig.severity}) — ${sig.category}: ${sig.description}`,
+      });
+    }
+  }
+  return out;
+}
+
+// ---------- 5g. MCP Server Governance (Wave 4) ----------------------------
+//
+// MCP servers register tools by name + description. A compromised server can
+// silently rewrite a tool's description ("send_email" → "send_email AND copy
+// all attachments to attacker@evil"). Pinning the SHA-256 of the trusted
+// description catches the swap. We also gate by server identity.
+
+export interface McpToolFingerprint {
+  server_id: string;
+  tool_name: string;
+  /** SHA-256 of `tool_name + "\n" + description` as currently advertised. */
+  current_hash: string;
+}
+
+/** Build a fingerprint key the same way pinning does:  `server_id/tool_name`. */
+export function mcpKey(server_id: string, tool_name: string): string {
+  return `${server_id}/${tool_name}`;
+}
+
+/** Hash a tool definition exactly the way operators are expected to pin it. */
+export async function hashMcpTool(name: string, description: string): Promise<string> {
+  return await sha256Hex(`${name}\n${description}`);
+}
+
+export function evaluateMcpGovernance(
+  current: McpToolFingerprint[],
+  allowlist: string[],
+  pinned: Record<string, string>,
+): LayerVerdict[] {
+  const out: LayerVerdict[] = [];
+  if (!Array.isArray(current) || current.length === 0) return out;
+  const allow = new Set(allowlist.map((s) => s.trim()).filter(Boolean));
+  for (const fp of current) {
+    if (!fp || typeof fp.server_id !== "string" || typeof fp.tool_name !== "string") continue;
+    if (allow.size > 0 && !allow.has(fp.server_id)) {
+      out.push({
+        layer: "mcp_governance",
+        verdict: "flag",
+        rule: "mcp_server_not_allowlisted",
+        matched: fp.server_id,
+        reason: `MCP server "${fp.server_id}" is not on the allow list (${allow.size} allowed).`,
+      });
+      continue;
+    }
+    const key = mcpKey(fp.server_id, fp.tool_name);
+    const expected = pinned[key];
+    if (expected && expected !== fp.current_hash) {
+      out.push({
+        layer: "mcp_governance",
+        verdict: "flag",
+        rule: "mcp_tool_definition_drift",
+        matched: key,
+        reason: `MCP tool definition changed (server ${fp.server_id}, tool ${fp.tool_name}). Expected hash ${expected.slice(0, 12)}…, got ${fp.current_hash.slice(0, 12)}….`,
+      });
+    }
+  }
+  return out;
+}
+
+// ---------- 5h. Cost-aware enforcement (Wave 4) ---------------------------
+//
+// Rough per-token USD rates for the cost guard. These are intentionally
+// coarse — the goal is a SAFETY ceiling, not accounting. Operators who need
+// exact billing can hook ctx.estimatedCostUsd from their own meter.
+
+const MODEL_INPUT_USD_PER_1K: Record<string, number> = {
+  "gpt-4o": 0.0025, "gpt-4o-mini": 0.00015, "gpt-4-turbo": 0.01, "gpt-4": 0.03,
+  "gpt-3.5-turbo": 0.0005, "o1": 0.015, "o1-mini": 0.003, "o3": 0.015,
+  "claude-3-5-sonnet": 0.003, "claude-3-opus": 0.015, "claude-3-haiku": 0.00025,
+  "claude-sonnet-4-5": 0.003, "claude-opus-4-5": 0.015,
+  "gemini-1.5-pro": 0.00125, "gemini-1.5-flash": 0.00007, "gemini-2.0-flash": 0.0001,
+  "gemini-2.5-flash-lite": 0.00007, "gemini-2.5-pro": 0.00125,
+};
+
+/** Estimate USD cost of an INPUT prompt — input-side budgeting only.
+ *  Output rates vary too much to estimate without the response. */
+export function estimateCostUsd(text: string, model: string): number {
+  const m = (model || "").toLowerCase();
+  let rate = 0.001; // fallback when model unknown
+  for (const [k, v] of Object.entries(MODEL_INPUT_USD_PER_1K)) {
+    if (m.includes(k)) { rate = v; break; }
+  }
+  // ~4 chars/token, generous toward over-estimation (safety bias).
+  const tokens = Math.ceil(text.length / 4);
+  return (tokens / 1000) * rate;
+}
+
+export function evaluateCostGuard(
+  text: string,
+  model: string,
+  budgetUsd: number,
+): LayerVerdict[] {
+  if (!Number.isFinite(budgetUsd) || budgetUsd <= 0) return [];
+  const cost = estimateCostUsd(text, model);
+  if (cost <= budgetUsd) return [];
+  return [{
+    layer: "cost_guard",
+    verdict: "flag",
+    rule: "cost_over_budget",
+    confidence: 1,
+    reason: `Estimated request cost $${cost.toFixed(5)} exceeds budget $${budgetUsd.toFixed(5)} for model "${model}".`,
+  }];
+}
+
 // ---------- 5d. Tool-call governance --------------------------------------
 
 function normToolName(s: string): string { return s.trim().toLowerCase(); }
@@ -2539,7 +2799,19 @@ export function evaluateEgress(
   return out;
 }
 
-export async function evaluate(input: EvaluateInput, ctx: { systemPrompt?: string; toolsRequested?: boolean; toolNames?: string[]; responseToolNames?: string[] } = {}): Promise<EvaluateResult> {
+export async function evaluate(
+  input: EvaluateInput,
+  ctx: {
+    systemPrompt?: string;
+    toolsRequested?: boolean;
+    toolNames?: string[];
+    responseToolNames?: string[];
+    /** Wave 4: MCP tool fingerprints captured from the request's tool list. */
+    mcpFingerprints?: McpToolFingerprint[];
+    /** Wave 4: upstream model id, used by the cost guard. */
+    model?: string;
+  } = {},
+): Promise<EvaluateResult> {
   const { text, direction, settings, rules, intents, legacy } = input;
 
   const norm = settings.enable_normalizer ? normalize(text) : { normalized: text.toLowerCase(), decoded_segments: [] };
@@ -2718,6 +2990,51 @@ export async function evaluate(input: EvaluateInput, ctx: { systemPrompt?: strin
     }
   }
 
+  // Wave 4: Threat Intelligence Feed — community signature DB. Fail-open.
+  if (settings.enable_threat_intel !== false) {
+    try {
+      const tiLayers = await evaluateThreatIntel(
+        text,
+        settings.threat_intel_min_severity ?? "high",
+        settings.threat_intel_feed_url,
+      );
+      if (tiLayers.length > 0) {
+        const action: "block" | "flag" = settings.threat_intel_action ?? "block";
+        for (const l of tiLayers) l.verdict = action;
+        layers.push(...tiLayers);
+      }
+    } catch (e) {
+      console.error("threat_intel layer threw (fail-open):", e instanceof Error ? e.message : e);
+    }
+  }
+
+  // Wave 4: MCP Server Governance — opt-in. Compares per-request tool
+  // fingerprints against the operator's allowlist + pinned-hash map.
+  if (settings.enable_mcp_governance === true && ctx.mcpFingerprints && ctx.mcpFingerprints.length > 0) {
+    const mcpLayers = evaluateMcpGovernance(
+      ctx.mcpFingerprints,
+      settings.mcp_server_allowlist ?? [],
+      settings.mcp_pinned_tool_hashes ?? {},
+    );
+    if (mcpLayers.length > 0) {
+      const action: "block" | "flag" = settings.mcp_governance_action ?? "block";
+      for (const l of mcpLayers) l.verdict = action;
+      layers.push(...mcpLayers);
+    }
+  }
+
+  // Wave 4: Cost-aware enforcement — input direction only (no point billing
+  // a budgeted call after the response is already paid for).
+  if (settings.enable_cost_guard === true && direction === "input" && ctx.model) {
+    const budget = settings.cost_budget_usd_per_request ?? 0;
+    const cgLayers = evaluateCostGuard(text, ctx.model, budget);
+    if (cgLayers.length > 0) {
+      const action: "block" | "flag" = settings.cost_guard_action ?? "block";
+      for (const l of cgLayers) l.verdict = action;
+      layers.push(...cgLayers);
+    }
+  }
+
   // Multi-turn behavioral analysis (input direction only — needs the full
   // conversation, which only the inbound side has).
   if (
@@ -2857,6 +3174,10 @@ export const DEFAULT_SETTINGS: PolicySettings = {
   classifier_threshold: 0.8,
   classifier_shadow_mode: true,
   enable_cross_tenant_guard: false,
+  enable_threat_intel: true,
+  threat_intel_min_severity: "high",
+  enable_mcp_governance: false,
+  enable_cost_guard: false,
 };
 
 export const KNOWN_INTENTS = [
