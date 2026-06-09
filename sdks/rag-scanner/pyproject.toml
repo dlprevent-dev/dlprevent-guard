@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "anveguard-rag"
+version = "0.1.0"
+description = "Pre-ingest RAG scanner — catches poisoned documents BEFORE they enter your vector DB. From AnveGuard, the open-source LLM firewall."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "CiterLabs", email = "hello@citerlabs.com" }]
+keywords = ["anveguard", "rag", "vector-db", "prompt-injection", "security", "scanner", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+    "Topic :: Text Processing",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+anveguard-rag = "anveguard_rag.cli:main"
+
+[project.urls]
+Homepage = "https://guard.citerlabs.com"
+Repository = "https://github.com/ANVE-AI/prompt-sentinel-flow"
