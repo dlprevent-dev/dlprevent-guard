@@ -1,0 +1,43 @@
+# AnveGuard ProductHunt VO — v5 (Wave 1-4 capabilities)
+#
+# Timing notes for ElevenLabs eleven_v2_5 / eleven_turbo_v2_5:
+# ~2.5 words/sec at default speed. Pad your read; SFX + music fill the gap.
+#
+# Word counts shown vs scene durations are at 30fps.
+# Total scene-budget words: ~140 across 60 seconds → ~2.3 words/sec average.
+
+[scene_1]
+# 170 frames = 5.67s. Hard-hit hook. Pause before "hacked".
+Your AI agent... just got hacked.
+
+[scene_2]
+# 215f = 7.17s. Three quick beats then settle.
+Prompt injection. Tool abuse. Data exfiltration. Every LLM you ship is a new attack surface.
+
+[scene_3]
+# 180f = 6.00s. Slow, declarative.
+Meet AnveGuard. The open-source LLM firewall. Drop-in. Free. Apache 2.0.
+
+[scene_4]
+# 190f = 6.33s. Marketing-tempo, faster pace.
+Sixty-second integration. Change one URL. Or pip install for LangChain and LangGraph.
+
+[scene_5]
+# 215f = 7.17s. Calm, technical.
+Every request inspected. Tools governed. Outputs scanned. RAG poisoning blocked at write time.
+
+[scene_6]
+# 170f = 5.67s. Punchy.
+Plus a community threat intelligence feed. Twenty-two signatures and counting.
+
+[scene_7]
+# 300f = 10.00s. Deliver the differentiator.
+MCP server governance. Counterfactual policy replay. Real-time cost guard. These are capabilities Triage doesn't ship. AnveGuard does.
+
+[scene_8b]
+# 305f = 10.17s. Numbers + receipts.
+One-hundred eighty six attack tests. Zero failures. Self-host with one command. SOC 2 evidence pack included. The receipts are open source.
+
+[scene_9]
+# 199f = 6.63s. Tag-line + URL.
+AnveGuard. Ship security, not surveys. guard.citerlabs.com.

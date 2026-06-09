@@ -1,0 +1,35 @@
+1
+00:00:00,200 --> 00:00:05,000
+Your AI agent just got hacked.
+
+2
+00:00:05,070 --> 00:00:11,500
+Prompt injection. Tool abuse. Data exfiltration. Every LLM you ship is a new attack surface.
+
+3
+00:00:11,630 --> 00:00:17,000
+Meet AnveGuard. The open-source LLM firewall. Drop-in. Free. Apache 2.0.
+
+4
+00:00:17,030 --> 00:00:22,500
+Sixty-second integration. Change one URL. Or pip install for LangChain and LangGraph.
+
+5
+00:00:22,770 --> 00:00:29,200
+Every request inspected. Tools governed. Outputs scanned. RAG poisoning blocked at write time.
+
+6
+00:00:29,330 --> 00:00:34,200
+Plus a community threat intelligence feed. Twenty-two signatures and counting.
+
+7
+00:00:34,400 --> 00:00:43,500
+MCP server governance. Counterfactual policy replay. Real-time cost guard. These are capabilities Triage doesn't ship. AnveGuard does.
+
+8
+00:00:43,800 --> 00:00:53,200
+186 attack tests. Zero failures. Self-host with one command. SOC 2 evidence pack included. The receipts are open source.
+
+9
+00:00:53,370 --> 00:00:59,800
+AnveGuard. Ship security, not surveys. guard dot citerlabs dot com.
