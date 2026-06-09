@@ -10,7 +10,7 @@ import { S4_Trap }        from "./scenes/v3/S4_Trap";
 import { S5_Obeys }       from "./scenes/v3/S5_Obeys";
 import { S6_Countdown }   from "./scenes/v3/S6_Countdown";
 import { S7_Intercept }   from "./scenes/v3/S7_Intercept";
-import { S8_Receipts }    from "./scenes/v3/S8_Receipts";
+import { S8b_Capabilities } from "./scenes/v3/S8b_Capabilities";
 import { S9_Outro }       from "./scenes/v3/S9_Outro";
 
 const t = linearTiming({ durationInFrames: 18 });
@@ -35,7 +35,7 @@ export const ProductHuntVideo: React.FC = () => (
       <TransitionSeries.Transition presentation={scanWipe()} timing={t} />
       <TransitionSeries.Sequence durationInFrames={300}><S7_Intercept /></TransitionSeries.Sequence>
       <TransitionSeries.Transition presentation={scanWipe()} timing={t} />
-      <TransitionSeries.Sequence durationInFrames={305}><S8_Receipts /></TransitionSeries.Sequence>
+      <TransitionSeries.Sequence durationInFrames={305}><S8b_Capabilities /></TransitionSeries.Sequence>
       <TransitionSeries.Transition presentation={scanWipe()} timing={t} />
       <TransitionSeries.Sequence durationInFrames={199}><S9_Outro /></TransitionSeries.Sequence>
     </TransitionSeries>
