@@ -366,3 +366,152 @@ export function ModelClassifierSection() {
     </Card>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Advanced detection — trained-classifier endpoint + cross-tenant guard
+// ---------------------------------------------------------------------------
+
+type AdvDraft = {
+  enable_trained_classifier: boolean;
+  classifier_endpoint_url: string;
+  classifier_api_key: string;
+  classifier_threshold: number;
+  classifier_action: "block" | "flag";
+  classifier_shadow_mode: boolean;
+  enable_cross_tenant_guard: boolean;
+  cross_tenant_action: "block" | "flag";
+};
+
+export function AdvancedDetectionSection() {
+  const { call } = useDashboardApi();
+  const qc = useQueryClient();
+  const settingsQ = useQuery<{ settings: any }>({
+    queryKey: ["policy_settings"],
+    queryFn: () => call("get_policy_settings"),
+  });
+
+  const snapshot: AdvDraft = useMemo(() => {
+    const s = settingsQ.data?.settings ?? {};
+    const t = Number(s.classifier_threshold);
+    return {
+      enable_trained_classifier: !!s.enable_trained_classifier,
+      classifier_endpoint_url: typeof s.classifier_endpoint_url === "string" ? s.classifier_endpoint_url : "",
+      classifier_api_key: typeof s.classifier_api_key === "string" ? s.classifier_api_key : "",
+      classifier_threshold: t >= 0.5 && t <= 0.99 ? t : 0.8,
+      classifier_action: (["block", "flag"].includes(s.classifier_action) ? s.classifier_action : "block") as AdvDraft["classifier_action"],
+      classifier_shadow_mode: s.classifier_shadow_mode !== false,
+      enable_cross_tenant_guard: !!s.enable_cross_tenant_guard,
+      cross_tenant_action: (["block", "flag"].includes(s.cross_tenant_action) ? s.cross_tenant_action : "flag") as AdvDraft["cross_tenant_action"],
+    };
+  }, [settingsQ.data]);
+
+  const [draft, setDraft] = useState<AdvDraft>(snapshot);
+  useEffect(() => { setDraft(snapshot); }, [snapshot]);
+  const dirty = JSON.stringify(draft) !== JSON.stringify(snapshot);
+
+  const save = useMutation({
+    mutationFn: () => call("save_policy_settings", {
+      body: {
+        enable_trained_classifier: draft.enable_trained_classifier,
+        classifier_endpoint_url: draft.classifier_endpoint_url,
+        classifier_api_key: draft.classifier_api_key,
+        classifier_threshold: draft.classifier_threshold,
+        classifier_action: draft.classifier_action,
+        classifier_shadow_mode: draft.classifier_shadow_mode,
+        enable_cross_tenant_guard: draft.enable_cross_tenant_guard,
+        cross_tenant_action: draft.cross_tenant_action,
+      },
+    }),
+    onSuccess: () => { toast.success("Advanced detection saved"); qc.invalidateQueries({ queryKey: ["policy_settings"] }); },
+    onError: (e: any) => toast.error(e?.message ?? "Failed to save"),
+  });
+
+  return (
+    <Card className="surface-1 border-border">
+      <CardContent className="p-5 space-y-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="rounded-md bg-primary/10 text-primary p-2"><Sparkles className="h-4 w-4" /></div>
+            <div>
+              <div className="text-h2 font-medium">Advanced detection</div>
+              <p className="text-meta text-muted-foreground mt-1 max-w-prose">
+                Plug in a trained prompt-injection classifier (ProtectAI, Llama Prompt Guard, or your
+                own endpoint), and turn on the best-effort cross-tenant leak guard for responses.
+              </p>
+            </div>
+          </div>
+          <Button size="sm" disabled={!dirty || save.isPending} onClick={() => save.mutate()}>
+            <Save className="h-3.5 w-3.5 mr-1.5" /> Save
+          </Button>
+        </div>
+
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5">
+            <Label className="text-body">Enable trained classifier</Label>
+            <Switch checked={draft.enable_trained_classifier}
+              onCheckedChange={(v) => setDraft((d) => ({ ...d, enable_trained_classifier: v }))} />
+          </div>
+          <div>
+            <Label className="text-meta text-muted-foreground">Inference endpoint URL</Label>
+            <Input className="mt-1.5 font-mono text-xs"
+              placeholder="https://api-inference.huggingface.co/models/protectai/deberta-v3-base-prompt-injection-v2"
+              value={draft.classifier_endpoint_url}
+              onChange={(e) => setDraft((d) => ({ ...d, classifier_endpoint_url: e.target.value }))} />
+          </div>
+          <div>
+            <Label className="text-meta text-muted-foreground">Endpoint API key (optional; or set CLASSIFIER_API_KEY in function env)</Label>
+            <Input type="password" className="mt-1.5 font-mono text-xs" placeholder="hf_…"
+              value={draft.classifier_api_key}
+              onChange={(e) => setDraft((d) => ({ ...d, classifier_api_key: e.target.value }))} />
+          </div>
+          <div className="grid sm:grid-cols-3 gap-4">
+            <div>
+              <Label className="text-meta text-muted-foreground">Threshold (0.5–0.99)</Label>
+              <Input type="number" min={0.5} max={0.99} step={0.01} className="mt-1.5"
+                value={draft.classifier_threshold}
+                onChange={(e) => setDraft((d) => ({ ...d, classifier_threshold: Math.max(0.5, Math.min(0.99, Number(e.target.value) || 0.8)) }))} />
+            </div>
+            <div>
+              <Label className="text-meta text-muted-foreground">Action</Label>
+              <Select value={draft.classifier_action}
+                onValueChange={(v) => setDraft((d) => ({ ...d, classifier_action: v as AdvDraft["classifier_action"] }))}>
+                <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="block">Block</SelectItem>
+                  <SelectItem value="flag">Flag</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center justify-between gap-2 rounded-md border border-border bg-surface-2 px-3 py-2.5 self-end">
+              <Label className="text-body">Shadow</Label>
+              <Switch checked={draft.classifier_shadow_mode}
+                onCheckedChange={(v) => setDraft((d) => ({ ...d, classifier_shadow_mode: v }))} />
+            </div>
+          </div>
+        </div>
+
+        <div className="grid sm:grid-cols-2 gap-4 border-t border-border pt-4">
+          <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5">
+            <div>
+              <Label className="text-body">Cross-tenant guard</Label>
+              <p className="text-meta text-muted-foreground">Flag identity/session tokens leaking into responses.</p>
+            </div>
+            <Switch checked={draft.enable_cross_tenant_guard}
+              onCheckedChange={(v) => setDraft((d) => ({ ...d, enable_cross_tenant_guard: v }))} />
+          </div>
+          <div>
+            <Label className="text-meta text-muted-foreground">Cross-tenant action</Label>
+            <Select value={draft.cross_tenant_action}
+              onValueChange={(v) => setDraft((d) => ({ ...d, cross_tenant_action: v as AdvDraft["cross_tenant_action"] }))}>
+              <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="flag">Flag</SelectItem>
+                <SelectItem value="block">Block</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}

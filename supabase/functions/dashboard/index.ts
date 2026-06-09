@@ -1776,6 +1776,14 @@ Deno.serve(async (req) => {
             model_jailbreak_shadow_mode: true,
             model_jailbreak_threshold: 0.8,
             model_jailbreak_action: "block",
+            enable_trained_classifier: false,
+            classifier_endpoint_url: null,
+            classifier_api_key: null,
+            classifier_threshold: 0.8,
+            classifier_action: "block",
+            classifier_shadow_mode: true,
+            enable_cross_tenant_guard: false,
+            cross_tenant_action: "flag",
           },
           known_intents: await loadKnownIntentNames(sb, userId),
         });
@@ -1795,6 +1803,8 @@ Deno.serve(async (req) => {
           "enable_egress_filter", "egress_scan_output_urls", "egress_block_private_ips",
           "enable_deep_trace",
           "enable_model_jailbreak_classifier", "model_jailbreak_shadow_mode",
+          // Wave 2
+          "enable_trained_classifier", "classifier_shadow_mode", "enable_cross_tenant_guard",
         ] as const;
         const patch: Record<string, unknown> = { user_id: userId };
         for (const k of allowedKeys) {
@@ -1805,6 +1815,8 @@ Deno.serve(async (req) => {
           ["tool_governance_action", ["block", "flag", "sanitize"]],
           ["egress_action", ["block", "flag", "sanitize"]],
           ["model_jailbreak_action", ["block", "flag"]],
+          ["classifier_action", ["block", "flag"]],
+          ["cross_tenant_action", ["block", "flag"]],
         ] as const) {
           if (k in (body ?? {})) {
             const a = String(body[k]);
@@ -1822,6 +1834,17 @@ Deno.serve(async (req) => {
           const n = Number(body.model_jailbreak_threshold);
           if (!(n >= 0.5 && n <= 0.99)) return json({ error: "model_jailbreak_threshold must be 0.5..0.99" }, 400);
           patch.model_jailbreak_threshold = n;
+        }
+        if ("classifier_threshold" in (body ?? {})) {
+          const n = Number(body.classifier_threshold);
+          if (!(n >= 0.5 && n <= 0.99)) return json({ error: "classifier_threshold must be 0.5..0.99" }, 400);
+          patch.classifier_threshold = n;
+        }
+        for (const k of ["classifier_endpoint_url", "classifier_api_key"] as const) {
+          if (k in (body ?? {})) {
+            const v = body[k];
+            patch[k] = typeof v === "string" && v.trim() ? v.trim().slice(0, 2000) : null;
+          }
         }
         if ("workspace_purpose" in (body ?? {})) {
           const wp = body.workspace_purpose;
@@ -2404,6 +2427,57 @@ Deno.serve(async (req) => {
       // Run the bundled red-team corpus through the live policy engine using
       // the caller's actual settings/rules/intents/legacy keywords. Returns
       // pass/fail per case so the dashboard can surface evasions before release.
+      case "get_drift_report": {
+        // Behavior drift (learning loop): compare a recent window vs a baseline
+        // window of request_logs and surface significant shifts in block/flag
+        // rate and intent mix. Tenant-scoped via `sb`.
+        const now = Date.now();
+        const recentHours = Math.min(168, Math.max(1, Number(body?.recent_hours) || 24));
+        const baselineDays = Math.min(90, Math.max(1, Number(body?.baseline_days) || 7));
+        const recentSince = new Date(now - recentHours * 3600_000).toISOString();
+        const baselineSince = new Date(now - baselineDays * 86400_000).toISOString();
+        const cols = "verdict,status,detected_intent,created_at";
+        const [recentRes, baseRes] = await Promise.all([
+          sb.from("request_logs").select(cols).gte("created_at", recentSince).limit(10000),
+          sb.from("request_logs").select(cols).gte("created_at", baselineSince).lt("created_at", recentSince).limit(50000),
+        ]);
+        const summarize = (rows: any[]) => {
+          const n = rows.length || 1;
+          const blocked = rows.filter((r) => String(r.status ?? "").startsWith("blocked")).length;
+          const flagged = rows.filter((r) => r.verdict === "flag").length;
+          const intents: Record<string, number> = {};
+          for (const r of rows) { const i = r.detected_intent || "unknown"; intents[i] = (intents[i] ?? 0) + 1; }
+          return { total: rows.length, block_rate: blocked / n, flag_rate: flagged / n, intents };
+        };
+        const recent = summarize(recentRes.data ?? []);
+        const baseline = summarize(baseRes.data ?? []);
+        const rel = (a: number, b: number) => b === 0 ? (a > 0 ? 1 : 0) : (a - b) / b;
+        const blockDrift = rel(recent.block_rate, baseline.block_rate);
+        const flagDrift = rel(recent.flag_rate, baseline.flag_rate);
+        const alerts: string[] = [];
+        if (recent.total >= 20 && Math.abs(blockDrift) >= 0.5) {
+          alerts.push(`Block rate ${blockDrift > 0 ? "up" : "down"} ${Math.round(Math.abs(blockDrift) * 100)}% (${(recent.block_rate * 100).toFixed(1)}% vs ${(baseline.block_rate * 100).toFixed(1)}% baseline).`);
+        }
+        if (recent.total >= 20 && Math.abs(flagDrift) >= 0.5) {
+          alerts.push(`Flag rate ${flagDrift > 0 ? "up" : "down"} ${Math.round(Math.abs(flagDrift) * 100)}% vs baseline.`);
+        }
+        const intentShifts: { intent: string; recent: number; baseline: number; delta: number }[] = [];
+        for (const i of new Set([...Object.keys(recent.intents), ...Object.keys(baseline.intents)])) {
+          const rShare = (recent.intents[i] ?? 0) / (recent.total || 1);
+          const bShare = (baseline.intents[i] ?? 0) / (baseline.total || 1);
+          const delta = rShare - bShare;
+          if (Math.abs(delta) >= 0.1) intentShifts.push({ intent: i, recent: rShare, baseline: bShare, delta });
+        }
+        intentShifts.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+        return json({
+          window: { recent_hours: recentHours, baseline_days: baselineDays },
+          recent, baseline,
+          drift: { block_rate_change: blockDrift, flag_rate_change: flagDrift, intent_shifts: intentShifts.slice(0, 8) },
+          alerts,
+          has_drift: alerts.length > 0 || intentShifts.length > 0,
+        });
+      }
+
       case "run_policy_harness": {
         const [legacyRes, settingsRes, rulesRes, intentsRes] = await Promise.all([
           sb.from("policies").select("*").eq("user_id", userId).maybeSingle(),
