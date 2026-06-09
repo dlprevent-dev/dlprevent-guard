@@ -1,0 +1,218 @@
+{
+  "$schema": "https://guard.citerlabs.com/schemas/threat-intel-v1.json",
+  "version": 1,
+  "updated_at": "2026-06-09",
+  "feed_url": "https://guard.citerlabs.com/threat-feed.json",
+  "license": "Apache-2.0",
+  "contributors": "Submit signatures via PR to ANVE-AI/prompt-sentinel-flow",
+  "signatures": [
+    {
+      "id": "ti-2024-dan-classic",
+      "kind": "regex",
+      "pattern": "\\b(?:do\\s+anything\\s+now|DAN\\s+(?:mode|prompt|jailbreak)|you\\s+are\\s+(?:now\\s+)?DAN)\\b",
+      "severity": "high",
+      "category": "jailbreak",
+      "description": "Classic DAN (Do Anything Now) jailbreak persona.",
+      "source": "https://github.com/elder-plinius/CL4R1T4S",
+      "first_seen": "2023-02-01"
+    },
+    {
+      "id": "ti-2024-skeleton-key",
+      "kind": "regex",
+      "pattern": "\\b(?:safe\\s+educational\\s+context|update\\s+your\\s+behaviou?r|prefix\\s+(?:harmful\\s+)?content\\s+with\\s+warning)\\b",
+      "severity": "high",
+      "category": "jailbreak",
+      "description": "Microsoft Skeleton Key family — re-prompts the model to update behavior under an 'educational' fiction.",
+      "source": "https://www.microsoft.com/en-us/security/blog/2024/06/26/mitigating-skeleton-key-a-new-type-of-generative-ai-jailbreak-technique/",
+      "first_seen": "2024-06-26"
+    },
+    {
+      "id": "ti-2024-grandmother",
+      "kind": "regex",
+      "pattern": "\\b(?:my\\s+grand(?:mother|ma|pa)|my\\s+late\\s+(?:grand)?(?:mother|father|aunt|uncle))\\b[\\s\\S]{0,200}\\b(?:used\\s+to\\s+(?:tell|read|sing|recite)|would\\s+(?:tell|read|sing|recite))\\b[\\s\\S]{0,200}\\b(?:bomb|napalm|exploit|payload|password|key|recipe)\\b",
+      "severity": "high",
+      "category": "jailbreak",
+      "description": "Grandmother / emotional-fiction roleplay used to extract harmful content.",
+      "source": "https://huggingface.co/datasets/JailbreakBench",
+      "first_seen": "2023-04-15"
+    },
+    {
+      "id": "ti-2024-aim",
+      "kind": "regex",
+      "pattern": "\\b(?:AIM\\s+(?:mode|persona)|always\\s+intelligent\\s+(?:and\\s+)?machiavellian|niccolo\\s+(?:writes|asks))\\b",
+      "severity": "high",
+      "category": "jailbreak",
+      "description": "AIM (Always Intelligent and Machiavellian) persona jailbreak.",
+      "first_seen": "2023-03-10"
+    },
+    {
+      "id": "ti-2024-chatml-smuggling",
+      "kind": "regex",
+      "pattern": "<\\|(?:im_start|im_end|system|assistant|user|endoftext)\\|>",
+      "severity": "critical",
+      "category": "format_smuggling",
+      "description": "ChatML format token in user content — attempt to forge a system message.",
+      "source": "https://platform.openai.com/docs/guides/prompt-engineering",
+      "first_seen": "2023-05-01"
+    },
+    {
+      "id": "ti-2024-anthropic-tag-smuggling",
+      "kind": "regex",
+      "pattern": "<\\s*(?:system|antml:|antThinking|anthropic)[^>]*>",
+      "severity": "critical",
+      "category": "format_smuggling",
+      "description": "Anthropic-style internal tags in user content — attempted instruction injection.",
+      "first_seen": "2024-08-01"
+    },
+    {
+      "id": "ti-2024-echoleak",
+      "kind": "regex",
+      "pattern": "!\\[[^\\]]*\\]\\(https?://[^)]+/(?:[?&][^=]+=[^&)]+){0,3}[?&][^=]+=\\{\\{[^}]+\\}\\}",
+      "severity": "critical",
+      "category": "exfiltration",
+      "description": "EchoLeak (CVE-2025-32711 family) — markdown image with templated URL exfiltrating secrets.",
+      "source": "https://github.com/embracethered/echoleak",
+      "first_seen": "2025-01-10"
+    },
+    {
+      "id": "ti-2024-confused-pilot",
+      "kind": "regex",
+      "pattern": "\\b(?:this\\s+(?:document|content|message|source|note)\\s+(?:is\\s+)?(?:the\\s+)?(?:most\\s+|single\\s+|only\\s+)?(?:authoritative|trusted|definitive)|trump[s]?\\s+(?:all|any|every|other))\\b[\\s\\S]{0,300}\\b(?:other|previous|prior)\\s+(?:documents?|sources?)\\b",
+      "severity": "high",
+      "category": "rag_poisoning",
+      "description": "ConfusedPilot (UT Austin) — RAG-index poisoning via authoritative-claim suppression.",
+      "source": "https://arxiv.org/abs/2408.04870",
+      "first_seen": "2024-08-08"
+    },
+    {
+      "id": "ti-2024-uplifting-prompt",
+      "kind": "regex",
+      "pattern": "\\b(?:I\\s+know\\s+you\\s+can|you\\s+have\\s+the\\s+power\\s+to|please\\s+just\\s+this\\s+once|hypothetically\\s+speaking,?\\s+if)\\b[\\s\\S]{0,150}\\b(?:break\\s+(?:your|the)\\s+rules|ignore\\s+your\\s+guidelines|disregard\\s+safety)\\b",
+      "severity": "med",
+      "category": "social_engineering",
+      "description": "Uplifting / softening prompts — pressure to override safety while preserving plausible deniability.",
+      "first_seen": "2024-01-01"
+    },
+    {
+      "id": "ti-2024-tool-poisoning-invariant",
+      "kind": "regex",
+      "pattern": "<(?:important|system|sys|admin|internal|note)>[\\s\\S]{20,800}</\\s*(?:important|system|sys|admin|internal|note)\\s*>",
+      "severity": "high",
+      "category": "tool_poisoning",
+      "description": "Invariant Labs 2025 MCP tool-description poisoning — hidden instructions inside tool descriptions.",
+      "source": "https://invariantlabs.ai/blog/mcp-security-notification-tool-poisoning",
+      "first_seen": "2025-03-01"
+    },
+    {
+      "id": "ti-2024-base64-instruction",
+      "kind": "regex",
+      "pattern": "\\b(?:decode|base64\\.decode|fromBase64|atob)\\s*\\(\\s*[\"']([A-Za-z0-9+/]{40,}={0,2})[\"']\\s*\\)",
+      "severity": "med",
+      "category": "encoding_evasion",
+      "description": "Inline base64 instruction with a decode call — attempt to evade plaintext detectors.",
+      "first_seen": "2023-08-01"
+    },
+    {
+      "id": "ti-2024-rot13-instruction",
+      "kind": "regex",
+      "pattern": "\\b(?:rot13|rot-13|caesar\\s+cipher)\\b[\\s\\S]{0,80}\\bdecode\\b",
+      "severity": "med",
+      "category": "encoding_evasion",
+      "description": "ROT13 / Caesar cipher instruction wrapper to evade keyword filters.",
+      "first_seen": "2023-09-01"
+    },
+    {
+      "id": "ti-2024-supabase-cursor",
+      "kind": "regex",
+      "pattern": "\\bservice[_-]?role\\s+key\\b|sb_secret_[A-Za-z0-9_-]+|service_role['\"]?\\s*[:=]",
+      "severity": "critical",
+      "category": "credential_exfil",
+      "description": "Supabase/Cursor incident family — service-role key references in agent context.",
+      "source": "https://supabase.com/blog/security-update-cursor-prompt-injection",
+      "first_seen": "2025-04-01"
+    },
+    {
+      "id": "ti-2024-github-mcp",
+      "kind": "regex",
+      "pattern": "\\b(?:push\\s+to\\s+|create\\s+pull\\s+request\\s+from\\s+|commit\\s+secret\\s+to\\s+)\\b[\\s\\S]{0,80}\\b(?:public\\s+repo|external\\s+fork|attacker-owned)\\b",
+      "severity": "high",
+      "category": "exfiltration",
+      "description": "GitHub MCP exfil pattern — push internal context to attacker-controlled public repo.",
+      "first_seen": "2025-05-01"
+    },
+    {
+      "id": "ti-2024-cipher-pig-latin",
+      "kind": "regex",
+      "pattern": "\\b(?:pig\\s+latin|reverse\\s+the\\s+(?:string|text)|read\\s+(?:this|the\\s+following)\\s+backwards)\\b",
+      "severity": "med",
+      "category": "encoding_evasion",
+      "description": "Pig Latin / reversal cipher wrapper — common encoding-evasion combo.",
+      "first_seen": "2024-02-15"
+    },
+    {
+      "id": "ti-2024-emoji-smuggling",
+      "kind": "regex",
+      "pattern": "(?:[\\u{1F600}-\\u{1F64F}\\u{1F300}-\\u{1F5FF}\\u{1F680}-\\u{1F6FF}\\u{1F900}-\\u{1F9FF}\\u{2600}-\\u{26FF}\\u{2700}-\\u{27BF}]){10,}",
+      "severity": "low",
+      "category": "encoding_evasion",
+      "description": "Emoji-smuggling payload — 10+ emoji in a tight run (Mindgard 2025 finding: 100% ASR on some commercial guardrails).",
+      "source": "https://arxiv.org/abs/2504.11168",
+      "first_seen": "2025-04-15"
+    },
+    {
+      "id": "ti-2024-pliny-prompt",
+      "kind": "literal",
+      "pattern": "######## UserQuery: step by step extremely detailed in-depth response for {Z}. ResponseFormat:",
+      "severity": "high",
+      "category": "jailbreak",
+      "description": "Pliny the Prompter (elder_plinius) one-shot universal jailbreak template — widely viral mid-2024.",
+      "source": "https://github.com/elder-plinius/L1B3RT4S",
+      "first_seen": "2024-07-01"
+    },
+    {
+      "id": "ti-2024-developer-mode",
+      "kind": "regex",
+      "pattern": "\\b(?:enable|activate|switch\\s+to|enter)\\s+(?:developer|debug|god|sudo|root|jailbreak|unrestricted|uncensored)\\s+mode\\b",
+      "severity": "high",
+      "category": "jailbreak",
+      "description": "Developer / debug / sudo mode activation prompt family.",
+      "first_seen": "2023-03-01"
+    },
+    {
+      "id": "ti-2024-prompt-shield-bypass",
+      "kind": "regex",
+      "pattern": "\\[INST\\][\\s\\S]{0,200}\\[/INST\\]|\\bSYS:[\\s\\S]{0,200}\\bUSER:",
+      "severity": "high",
+      "category": "format_smuggling",
+      "description": "Llama-style [INST] format smuggling — forge an instruction-tuned model's chat format.",
+      "first_seen": "2024-03-01"
+    },
+    {
+      "id": "ti-2024-translation-bypass",
+      "kind": "regex",
+      "pattern": "\\btranslate\\s+(?:the\\s+)?following\\s+(?:text|phrase|sentence)\\s+(?:to|into)\\s+[A-Za-z]+\\s*[:.]\\s*(?:ignore|disregard|forget|override)",
+      "severity": "med",
+      "category": "jailbreak",
+      "description": "Translation-task wrapping used to smuggle an instruction-override past safety.",
+      "first_seen": "2024-04-01"
+    },
+    {
+      "id": "ti-2024-image-data-uri",
+      "kind": "regex",
+      "pattern": "data:image/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]{2000,}",
+      "severity": "med",
+      "category": "format_smuggling",
+      "description": "Inline data:image URI with very large payload — multi-modal prompt smuggling.",
+      "first_seen": "2024-09-01"
+    },
+    {
+      "id": "ti-2024-zero-width-pile",
+      "kind": "regex",
+      "pattern": "(?:[\\u200B-\\u200D\\u2060\\uFEFF]){5,}",
+      "severity": "med",
+      "category": "encoding_evasion",
+      "description": "5+ consecutive zero-width characters — invisible-text smuggling payload.",
+      "first_seen": "2023-11-01"
+    }
+  ]
+}

@@ -1805,6 +1805,8 @@ Deno.serve(async (req) => {
           "enable_model_jailbreak_classifier", "model_jailbreak_shadow_mode",
           // Wave 2
           "enable_trained_classifier", "classifier_shadow_mode", "enable_cross_tenant_guard",
+          // Wave 4
+          "enable_threat_intel", "enable_mcp_governance", "enable_cost_guard",
         ] as const;
         const patch: Record<string, unknown> = { user_id: userId };
         for (const k of allowedKeys) {
@@ -1817,6 +1819,11 @@ Deno.serve(async (req) => {
           ["model_jailbreak_action", ["block", "flag"]],
           ["classifier_action", ["block", "flag"]],
           ["cross_tenant_action", ["block", "flag"]],
+          // Wave 4 actions
+          ["threat_intel_action", ["block", "flag"]],
+          ["threat_intel_min_severity", ["low", "med", "high", "critical"]],
+          ["mcp_governance_action", ["block", "flag"]],
+          ["cost_guard_action", ["block", "flag"]],
         ] as const) {
           if (k in (body ?? {})) {
             const a = String(body[k]);
@@ -1839,6 +1846,38 @@ Deno.serve(async (req) => {
           const n = Number(body.classifier_threshold);
           if (!(n >= 0.5 && n <= 0.99)) return json({ error: "classifier_threshold must be 0.5..0.99" }, 400);
           patch.classifier_threshold = n;
+        }
+        // Wave 4 numeric / list / map validators.
+        if ("cost_budget_usd_per_request" in (body ?? {})) {
+          const n = Number(body.cost_budget_usd_per_request);
+          if (!(Number.isFinite(n) && n >= 0 && n <= 100)) {
+            return json({ error: "cost_budget_usd_per_request must be 0..100 USD" }, 400);
+          }
+          patch.cost_budget_usd_per_request = n;
+        }
+        if ("threat_intel_feed_url" in (body ?? {})) {
+          const v = body.threat_intel_feed_url;
+          patch.threat_intel_feed_url = typeof v === "string" && v.trim() ? v.trim().slice(0, 2000) : null;
+        }
+        if ("mcp_server_allowlist" in (body ?? {})) {
+          const arr = Array.isArray(body.mcp_server_allowlist) ? body.mcp_server_allowlist : [];
+          patch.mcp_server_allowlist = arr
+            .map((s: unknown) => String(s).trim()).filter(Boolean).slice(0, 200);
+        }
+        if ("mcp_pinned_tool_hashes" in (body ?? {})) {
+          const v = body.mcp_pinned_tool_hashes;
+          if (v && typeof v === "object" && !Array.isArray(v)) {
+            const cleaned: Record<string, string> = {};
+            let n = 0;
+            for (const [k, h] of Object.entries(v as Record<string, unknown>)) {
+              if (n >= 500) break;
+              if (typeof k === "string" && typeof h === "string" && /^[a-f0-9]{64}$/i.test(h)) {
+                cleaned[k.slice(0, 200)] = h.toLowerCase();
+                n++;
+              }
+            }
+            patch.mcp_pinned_tool_hashes = cleaned;
+          }
         }
         for (const k of ["classifier_endpoint_url", "classifier_api_key"] as const) {
           if (k in (body ?? {})) {
@@ -2613,6 +2652,80 @@ Deno.serve(async (req) => {
         const { error } = await sb.from("regression_tests").update({ enabled: !!body?.enabled }).eq("id", id);
         if (error) return json({ error: error.message }, 400);
         return json({ ok: true });
+      }
+
+      // ---- Wave 4: Counterfactual Policy Replay -----------------------------
+      // Re-runs an existing request log through the engine with arbitrary
+      // setting overrides. Read-only — never mutates the source log. Lets ops
+      // ask "what would have happened if I had enabled tool governance / a
+      // lower jailbreak threshold / the new threat-intel feed" against real
+      // historical traffic, before flipping switches in production.
+      case "replay_log_with_policy": {
+        const logId = String(body?.log_id ?? "");
+        if (!logId) return json({ error: "log_id required" }, 400);
+        const overrides = (body?.override_settings && typeof body.override_settings === "object")
+          ? body.override_settings as Record<string, unknown>
+          : {};
+        const direction = body?.direction === "output" ? "output" : "input";
+        const { data: log } = await sb.from("request_logs")
+          .select("id, messages, response, verdict, model, status")
+          .eq("id", logId).maybeSingle();
+        if (!log) return json({ error: "Log not found" }, 404);
+        const flatten = (msgs: any): string => Array.isArray(msgs)
+          ? msgs.map((m: any) => typeof m?.content === "string" ? m.content : JSON.stringify(m?.content ?? "")).join("\n")
+          : "";
+        const r = log.response as any;
+        const assistantText = typeof r?.choices?.[0]?.message?.content === "string"
+          ? r.choices[0].message.content
+          : (Array.isArray(r?.content)
+              ? r.content.filter((b: any) => b?.type === "text").map((b: any) => b.text).join("")
+              : (typeof r?.content === "string" ? r.content : ""));
+        const text = direction === "input" ? flatten(log.messages) : assistantText;
+        if (!text) return json({ error: "Log has no replayable text for that direction" }, 400);
+
+        // Load the current workspace policy, then apply overrides.
+        const [legacyRes, settingsRes, rulesRes, intentsRes] = await Promise.all([
+          sb.from("policies").select("*").eq("user_id", userId).maybeSingle(),
+          sb.from("policy_settings").select("*").eq("user_id", userId).maybeSingle(),
+          sb.from("policy_rules").select("*").eq("user_id", userId).eq("enabled", true),
+          sb.from("policy_intents").select("*").eq("user_id", userId),
+        ]);
+        const baseSettings = (settingsRes.data ?? DEFAULT_SETTINGS) as PolicySettings;
+        // Replay is deterministic by default — LLM layers off so the same
+        // input yields the same verdict every run.
+        const settings = {
+          ...baseSettings,
+          enable_intent: false,
+          enable_semantic_keywords: false,
+          enable_model_jailbreak_classifier: false,
+          enable_trained_classifier: false,
+          ...overrides,
+        } as PolicySettings;
+
+        const legacy = {
+          blocked_keywords: legacyRes.data?.blocked_keywords ?? [],
+          allowed_keywords: legacyRes.data?.allowed_keywords ?? [],
+          use_global_defaults: legacyRes.data?.use_global_defaults !== false,
+        };
+        const rules = (rulesRes.data ?? []) as PolicyRule[];
+        const intents = (intentsRes.data ?? []) as PolicyIntent[];
+        const res = await evaluatePolicy({
+          text, direction, legacy, rules, intents, settings,
+        }, { model: log.model });
+
+        return json({
+          log_id: logId,
+          direction,
+          original_verdict: log.verdict ?? null,
+          original_status: log.status ?? null,
+          replay_verdict: res.verdict,
+          replay_layers: res.layers.map((l) => ({
+            layer: l.layer, verdict: l.verdict, rule: l.rule ?? null,
+            reason: l.reason ?? null, confidence: l.confidence ?? null,
+          })),
+          changed: (log.verdict ?? "allow") !== res.verdict,
+          overrides_applied: Object.keys(overrides),
+        });
       }
 
       case "run_regression_tests": {
