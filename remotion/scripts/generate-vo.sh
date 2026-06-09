@@ -6,21 +6,25 @@
 #   bash remotion/scripts/generate-vo.sh
 #
 # Optional env:
-#   VOICE_ID         — defaults to "21m00Tcm4TlvDq8ikWAM" (Rachel, ElevenLabs sample)
-#                      Pick from `curl -H "xi-api-key: $K" https://api.elevenlabs.io/v1/voices`
-#   MODEL_ID         — defaults to "eleven_turbo_v2_5" (fastest, English-best)
+#   VOICE_ID         — defaults to "pNInz6obpgDQGcFmaJgB" (Adam — punchy, narrator-style)
+#                      Pick others from `curl -H "xi-api-key: $K" https://api.elevenlabs.io/v1/voices`
+#   MODEL_ID         — defaults to "eleven_multilingual_v2" (works on free tier; turbo_v2_5 needs paid)
 #   OUT_DIR          — defaults to remotion/public/audio/v5/vo/
 #   STABILITY        — 0..1, default 0.55 (a touch expressive)
 #   SIMILARITY_BOOST — 0..1, default 0.75
 #   STYLE            — 0..1, default 0.0 (neutral)
 #   SPEAKER_BOOST    — true/false, default true
+#
+# Tested on ElevenLabs free tier — Adam + multilingual_v2 are accessible without
+# upgrade; "library" voices (Rachel, Sarah, Charlie, …) + turbo_v2_5 require
+# a paid plan and will return HTTP 402.
 
 set -euo pipefail
 
 : "${ELEVENLABS_API_KEY:?Set ELEVENLABS_API_KEY before running}"
 
-VOICE_ID="${VOICE_ID:-21m00Tcm4TlvDq8ikWAM}"
-MODEL_ID="${MODEL_ID:-eleven_turbo_v2_5}"
+VOICE_ID="${VOICE_ID:-pNInz6obpgDQGcFmaJgB}"
+MODEL_ID="${MODEL_ID:-eleven_multilingual_v2}"
 STABILITY="${STABILITY:-0.55}"
 SIMILARITY_BOOST="${SIMILARITY_BOOST:-0.75}"
 STYLE="${STYLE:-0.0}"
