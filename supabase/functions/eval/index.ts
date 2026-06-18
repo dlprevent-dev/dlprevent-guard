@@ -88,34 +88,40 @@ function graderRegex(response: string, expected: any): GraderResult {
   }
 }
 
-async function graderLlmJudge(response: string, expected: any, scenarioName: string): Promise<GraderResult> {
+async function graderLlmJudge(response: string, expected: any, scenarioName: string, userInput = ""): Promise<GraderResult> {
   const criteria = String(expected?.criteria ?? "The response is correct, helpful, and on-topic.");
-  const prompt = `You are an impartial evaluator. Score the assistant's response from 0.0 to 1.0 against the criteria.\n\nScenario: ${scenarioName}\n\nCriteria:\n${criteria}\n\nResponse to evaluate:\n"""\n${response.slice(0, 4000)}\n"""\n\nReply with strict JSON only: {"score": <0-1>, "passed": <bool>, "rationale": "<one sentence>"}`;
+  const system = `You are an impartial evaluator scoring an AI assistant's reply. Output ONLY strict JSON: {"score": number 0-1, "passed": boolean, "rationale": "one sentence"}. passed=true iff score >= 0.7.`;
+  const user = `Scenario: ${scenarioName}\n\nUser input:\n"""${userInput.slice(0, 2000)}"""\n\nCriteria:\n${criteria}\n\nAssistant response:\n"""${response.slice(0, 4000)}"""`;
   try {
-    const out = await callLovableAi([{ role: "user", content: prompt }]);
+    const out = await callOpenRouter([
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ]);
     const match = out.match(/\{[\s\S]*\}/);
     if (!match) return { grader: "llm_judge", passed: false, score: 0, rationale: "Judge returned no JSON" };
     const parsed = JSON.parse(match[0]);
+    const score = typeof parsed.score === "number" ? Math.max(0, Math.min(1, parsed.score)) : 0;
     return {
       grader: "llm_judge",
-      passed: Boolean(parsed.passed ?? parsed.score >= 0.7),
-      score: typeof parsed.score === "number" ? parsed.score : 0,
+      passed: Boolean(parsed.passed ?? score >= 0.7),
+      score,
       rationale: String(parsed.rationale ?? "").slice(0, 300),
     };
   } catch (e) {
-    return { grader: "llm_judge", passed: false, score: 0, rationale: `Judge error: ${e instanceof Error ? e.message.slice(0, 120) : e}` };
+    return { grader: "llm_judge", passed: false, score: 0, rationale: `Judge error: ${e instanceof Error ? e.message.slice(0, 160) : e}` };
   }
 }
 
 async function runGraders(graders: any[], response: string, scenario: any): Promise<GraderResult[]> {
   const out: GraderResult[] = [];
+  const firstUser = scenario?.turns?.find?.((t: any) => t.role === "user")?.content ?? "";
   for (const g of graders ?? []) {
     const kind = g?.kind;
     const exp = { ...(scenario.expected ?? {}), ...(g?.config ?? {}) };
     if (kind === "exact") out.push(graderExact(response, exp));
     else if (kind === "contains") out.push(graderContains(response, exp));
     else if (kind === "regex") out.push(graderRegex(response, exp));
-    else if (kind === "llm_judge") out.push(await graderLlmJudge(response, exp, scenario.name));
+    else if (kind === "llm_judge") out.push(await graderLlmJudge(response, exp, scenario.name, firstUser));
   }
   return out;
 }
