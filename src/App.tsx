@@ -32,6 +32,10 @@ import RegressionTests from "./pages/dashboard/RegressionTests";
 import EvalProductivity from "./pages/dashboard/evaluate/Productivity";
 import EvalSuites from "./pages/dashboard/evaluate/Suites";
 import EvalScenarios from "./pages/dashboard/evaluate/Scenarios";
+import TestLab from "./pages/dashboard/evaluate/TestLab";
+import PlanReview from "./pages/dashboard/evaluate/PlanReview";
+import PlanReport from "./pages/dashboard/evaluate/PlanReport";
+
 import SignInPage from "./pages/SignIn";
 import SignUpPage from "./pages/SignUp";
 import DocsLayout from "./pages/docs/DocsLayout";
