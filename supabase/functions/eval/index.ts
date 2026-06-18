@@ -335,5 +335,5 @@ Deno.serve(async (req) => {
     }
   })();
 
-  return applyDashboardCors(inner);
+  return applyDashboardCors(inner, req);
 });
