@@ -533,6 +533,7 @@ Deno.serve(async (req) => {
           else if (hasO) api_type = "openai";
           else if (hasW) api_type = "webhook";
           const { data, error } = await sb.from("agent_targets").insert({
+            user_id: userId,
             name, api_type,
             config: config ?? {},
             config_openai: hasO ? config_openai : null,
