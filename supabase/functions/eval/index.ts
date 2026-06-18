@@ -390,6 +390,7 @@ Deno.serve(async (req) => {
           const { name, category, turns, expected, suite_id, context, source } = body;
           if (!name || !Array.isArray(turns) || turns.length === 0) return json({ error: "name and at least one turn required" }, 400);
           const { data, error } = await sb.from("eval_scenarios").insert({
+            user_id: userId,
             name, category: category ?? "happy_path",
             turns, expected: expected ?? null,
             suite_id: suite_id ?? null,
