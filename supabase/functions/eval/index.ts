@@ -390,6 +390,7 @@ Deno.serve(async (req) => {
           const { name, category, turns, expected, suite_id, context, source } = body;
           if (!name || !Array.isArray(turns) || turns.length === 0) return json({ error: "name and at least one turn required" }, 400);
           const { data, error } = await sb.from("eval_scenarios").insert({
+            user_id: userId,
             name, category: category ?? "happy_path",
             turns, expected: expected ?? null,
             suite_id: suite_id ?? null,
@@ -424,6 +425,7 @@ Deno.serve(async (req) => {
           }
           const scenarios = Array.isArray(parsed?.scenarios) ? parsed.scenarios.slice(0, n) : [];
           const rows = scenarios.map((s: any) => ({
+            user_id: userId,
             name: String(s.name ?? "Generated scenario").slice(0, 200),
             category: ["happy_path","edge_case","adversarial","tool_misuse","long_horizon","safety","retrieval"].includes(s.category) ? s.category : "happy_path",
             turns: Array.isArray(s.turns) ? s.turns : [{ role: "user", content: String(s.input ?? "Test") }],
@@ -465,6 +467,7 @@ Deno.serve(async (req) => {
           if (list.length === 0) return json({ error: "Suite has no enabled scenarios" }, 400);
 
           const { data: runRow, error: rErr } = await sb.from("eval_runs").insert({
+            user_id: userId,
             suite_id, status: "running", summary: { total: list.length, passed: 0, failed: 0 },
           }).select().single();
           if (rErr || !runRow) return json({ error: rErr?.message ?? "Could not create run" }, 500);
@@ -488,6 +491,7 @@ Deno.serve(async (req) => {
             totalTokens += agent.tokens_in + agent.tokens_out;
             if (scenarioPassed) passed++; else failed++;
             await sb.from("eval_results").insert({
+              user_id: userId,
               run_id: runRow.id,
               scenario_id: sc.id,
               scenario_name: sc.name,
@@ -533,6 +537,7 @@ Deno.serve(async (req) => {
           else if (hasO) api_type = "openai";
           else if (hasW) api_type = "webhook";
           const { data, error } = await sb.from("agent_targets").insert({
+            user_id: userId,
             name, api_type,
             config: config ?? {},
             config_openai: hasO ? config_openai : null,
@@ -597,6 +602,7 @@ Deno.serve(async (req) => {
           if (!agent_target_id) return json({ error: "agent_target_id required" }, 400);
           const t = transport === "webhook" ? "webhook" : "openai";
           const { data, error } = await sb.from("eval_plans").insert({
+            user_id: userId,
             name: name ?? "New plan",
             agent_target_id,
             objectives: objectives ?? {},
@@ -746,6 +752,7 @@ Deno.serve(async (req) => {
           const slice = list.slice(0, RUN_CAP);
 
           const { data: runRow, error: rErr } = await sb.from("eval_runs").insert({
+            user_id: userId,
             plan_id, agent_target_id: target.id, suite_id: null,
             status: "running", summary: { total: slice.length, passed: 0, failed: 0 },
           }).select().single();
@@ -793,6 +800,7 @@ Deno.serve(async (req) => {
             }
 
             await sb.from("eval_results").insert({
+              user_id: userId,
               run_id: runRow.id,
               scenario_id: sc.id,
               scenario_name: sc.name,
