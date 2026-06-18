@@ -761,7 +761,7 @@ Deno.serve(async (req) => {
             const sc = slice[i];
             const t0 = Date.now();
             const firstUser = sc.turns?.find?.((t: any) => t.role === "user")?.content ?? "";
-            const agent = await callAgent(target, firstUser, sc.turns);
+            const agent = await callAgent(target, firstUser, sc.turns, plan.transport);
             const lat = Date.now() - t0;
             latencies.push(lat);
             totalTokens += agent.tokens_in + agent.tokens_out;
