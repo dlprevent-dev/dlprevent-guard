@@ -517,19 +517,44 @@ Deno.serve(async (req) => {
         // ---------------------- Agent targets ----------------------
         case "list_targets": {
           const { data, error } = await sb.from("agent_targets")
-            .select("id,name,api_type,config,created_at,updated_at")
+            .select("id,name,api_type,config,config_openai,config_webhook,created_at,updated_at")
             .order("created_at", { ascending: false });
           if (error) return json({ error: error.message }, 400);
           return json({ targets: data ?? [] });
         }
         case "create_target": {
-          const { name, api_type, config, auth_token } = body;
-          if (!name || !api_type) return json({ error: "name and api_type required" }, 400);
+          const { name, config_openai, config_webhook, config, api_type: legacyType, auth_token } = body;
+          if (!name) return json({ error: "name required" }, 400);
+          const hasO = config_openai && Object.keys(config_openai).length > 0;
+          const hasW = config_webhook && Object.keys(config_webhook).length > 0;
+          // Back-compat: accept the old single-config shape from existing callers.
+          let api_type = legacyType ?? "openai";
+          if (hasO && hasW) api_type = "dual";
+          else if (hasO) api_type = "openai";
+          else if (hasW) api_type = "webhook";
           const { data, error } = await sb.from("agent_targets").insert({
             name, api_type,
             config: config ?? {},
+            config_openai: hasO ? config_openai : null,
+            config_webhook: hasW ? config_webhook : null,
             auth_token: auth_token ?? null,
-          }).select("id,name,api_type,config,created_at").single();
+          }).select("id,name,api_type,config,config_openai,config_webhook,created_at").single();
+          if (error) return json({ error: error.message }, 400);
+          return json({ target: data });
+        }
+        case "update_target": {
+          const { id, name, config_openai, config_webhook, auth_token } = body;
+          if (!id) return json({ error: "id required" }, 400);
+          const patch: any = {};
+          if (name !== undefined) patch.name = name;
+          if (config_openai !== undefined) patch.config_openai = config_openai;
+          if (config_webhook !== undefined) patch.config_webhook = config_webhook;
+          if (auth_token !== undefined) patch.auth_token = auth_token;
+          const hasO = config_openai && Object.keys(config_openai).length > 0;
+          const hasW = config_webhook && Object.keys(config_webhook).length > 0;
+          if (hasO || hasW) patch.api_type = hasO && hasW ? "dual" : (hasO ? "openai" : "webhook");
+          const { data, error } = await sb.from("agent_targets").update(patch).eq("id", id)
+            .select("id,name,api_type,config_openai,config_webhook").single();
           if (error) return json({ error: error.message }, 400);
           return json({ target: data });
         }
@@ -541,13 +566,14 @@ Deno.serve(async (req) => {
           return json({ ok: true });
         }
         case "ping_target": {
-          const { id, sample_input } = body;
+          const { id, sample_input, transport } = body;
           if (!id) return json({ error: "id required" }, 400);
           const { data: t, error } = await sb.from("agent_targets").select("*").eq("id", id).single();
           if (error || !t) return json({ error: "target not found" }, 404);
-          const out = await callAgent(t, sample_input ?? "Hello, please introduce yourself in one sentence.");
-          return json({ ok: !out.error, response: out.text, status: out.status, error: out.error, latency_ms: out.ms });
+          const out = await callAgent(t, sample_input ?? "Hello, please introduce yourself in one sentence.", undefined, transport);
+          return json({ ok: !out.error, response: out.text, status: out.status, error: out.error, latency_ms: out.ms, transport: transport ?? null });
         }
+
 
         // ---------------------- Plans CRUD ----------------------
         case "list_plans": {
