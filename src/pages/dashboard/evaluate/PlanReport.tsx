@@ -45,8 +45,9 @@ export default function PlanReport() {
 
       <PageHeader
         title={`Evaluation report — ${planName}`}
-        description={`Agent: ${targetName} • Run: ${new Date(run?.started_at ?? Date.now()).toLocaleString()}`}
+        description={`Agent: ${targetName} • Transport: ${run?.eval_plans?.transport ?? "—"} • Run: ${new Date(run?.started_at ?? Date.now()).toLocaleString()}`}
       />
+
 
       <div className="grid gap-3 md:grid-cols-4">
         <Tile label="Pass rate" value={`${Math.round((summary.pass_rate ?? 0) * 100)}%`} sub={`${summary.passed ?? 0} / ${summary.total ?? 0}`} />

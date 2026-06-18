@@ -19,6 +19,8 @@ export type Database = {
           api_type: string
           auth_token: string | null
           config: Json
+          config_openai: Json | null
+          config_webhook: Json | null
           created_at: string
           id: string
           name: string
@@ -29,6 +31,8 @@ export type Database = {
           api_type?: string
           auth_token?: string | null
           config?: Json
+          config_openai?: Json | null
+          config_webhook?: Json | null
           created_at?: string
           id?: string
           name: string
@@ -39,6 +43,8 @@ export type Database = {
           api_type?: string
           auth_token?: string | null
           config?: Json
+          config_openai?: Json | null
+          config_webhook?: Json | null
           created_at?: string
           id?: string
           name?: string
@@ -360,6 +366,7 @@ export type Database = {
           question_count: number
           status: string
           summary: Json | null
+          transport: string
           updated_at: string
           user_id: string
           weights: Json
@@ -373,6 +380,7 @@ export type Database = {
           question_count?: number
           status?: string
           summary?: Json | null
+          transport?: string
           updated_at?: string
           user_id: string
           weights?: Json
@@ -386,6 +394,7 @@ export type Database = {
           question_count?: number
           status?: string
           summary?: Json | null
+          transport?: string
           updated_at?: string
           user_id?: string
           weights?: Json

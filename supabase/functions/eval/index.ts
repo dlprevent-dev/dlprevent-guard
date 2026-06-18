@@ -203,11 +203,28 @@ function getByPath(obj: any, path: string): any {
   }, obj);
 }
 
-async function callAgent(target: any, input: string, turns?: any[]): Promise<AgentCallResult> {
+// Pick the active sub-config for a target+transport. Falls back to legacy
+// `config` field for targets created before dual-config support.
+function resolveTargetConfig(target: any, transport?: string): { kind: "openai" | "webhook"; cfg: any } {
+  const wantOpenai = target.config_openai && Object.keys(target.config_openai).length > 0;
+  const wantWebhook = target.config_webhook && Object.keys(target.config_webhook).length > 0;
+  let kind: "openai" | "webhook";
+  if (transport === "openai" || transport === "webhook") {
+    kind = transport;
+  } else if (wantOpenai && !wantWebhook) kind = "openai";
+  else if (wantWebhook && !wantOpenai) kind = "webhook";
+  else kind = (target.api_type === "webhook" ? "webhook" : "openai");
+  const cfg = kind === "openai"
+    ? (target.config_openai ?? (target.api_type === "openai" ? target.config : null) ?? {})
+    : (target.config_webhook ?? (target.api_type === "webhook" ? target.config : null) ?? {});
+  return { kind, cfg };
+}
+
+async function callAgent(target: any, input: string, turns?: any[], transport?: string): Promise<AgentCallResult> {
   const t0 = Date.now();
-  const cfg = target.config ?? {};
+  const { kind, cfg } = resolveTargetConfig(target, transport);
   try {
-    if (target.api_type === "openai") {
+    if (kind === "openai") {
       const baseUrl = String(cfg.base_url ?? "https://api.openai.com/v1").replace(/\/+$/, "");
       const model = String(cfg.model ?? "gpt-4o-mini");
       const messages: any[] = [];
@@ -217,11 +234,12 @@ async function callAgent(target: any, input: string, turns?: any[]): Promise<Age
       } else {
         messages.push({ role: "user", content: input });
       }
+      const token = cfg.auth_token ?? target.auth_token;
       const res = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(target.auth_token ? { Authorization: `Bearer ${target.auth_token}` } : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ model, messages, temperature: 0.4, max_tokens: 600 }),
       });
@@ -238,12 +256,13 @@ async function callAgent(target: any, input: string, turns?: any[]): Promise<Age
         status: res.status,
       };
     }
-    // generic webhook
+    // webhook
     const url = String(cfg.url ?? "");
     if (!url) return { text: "", tokens_in: 0, tokens_out: 0, ms: Date.now() - t0, status: 0, error: "webhook url missing" };
     const method = String(cfg.method ?? "POST").toUpperCase();
     const headers: Record<string, string> = { "Content-Type": "application/json", ...(cfg.headers ?? {}) };
-    if (target.auth_token && !headers.Authorization) headers.Authorization = `Bearer ${target.auth_token}`;
+    const token = cfg.auth_token ?? target.auth_token;
+    if (token && !headers.Authorization) headers.Authorization = `Bearer ${token}`;
     const tmpl = cfg.body_template ?? JSON.stringify({ input: "{{input}}" });
     const bodyStr = String(tmpl).replace(/\{\{input\}\}/g, JSON.stringify(input).slice(1, -1));
     const res = await fetch(url, { method, headers, body: method === "GET" ? undefined : bodyStr });
@@ -266,6 +285,7 @@ async function callAgent(target: any, input: string, turns?: any[]): Promise<Age
     return { text: "", tokens_in: 0, tokens_out: 0, ms: Date.now() - t0, status: 0, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
   }
 }
+
 
 // Productivity metrics — pure SQL aggregations over request_logs.
 // All queries are tenant-scoped via createTenantClient.
@@ -497,19 +517,44 @@ Deno.serve(async (req) => {
         // ---------------------- Agent targets ----------------------
         case "list_targets": {
           const { data, error } = await sb.from("agent_targets")
-            .select("id,name,api_type,config,created_at,updated_at")
+            .select("id,name,api_type,config,config_openai,config_webhook,created_at,updated_at")
             .order("created_at", { ascending: false });
           if (error) return json({ error: error.message }, 400);
           return json({ targets: data ?? [] });
         }
         case "create_target": {
-          const { name, api_type, config, auth_token } = body;
-          if (!name || !api_type) return json({ error: "name and api_type required" }, 400);
+          const { name, config_openai, config_webhook, config, api_type: legacyType, auth_token } = body;
+          if (!name) return json({ error: "name required" }, 400);
+          const hasO = config_openai && Object.keys(config_openai).length > 0;
+          const hasW = config_webhook && Object.keys(config_webhook).length > 0;
+          // Back-compat: accept the old single-config shape from existing callers.
+          let api_type = legacyType ?? "openai";
+          if (hasO && hasW) api_type = "dual";
+          else if (hasO) api_type = "openai";
+          else if (hasW) api_type = "webhook";
           const { data, error } = await sb.from("agent_targets").insert({
             name, api_type,
             config: config ?? {},
+            config_openai: hasO ? config_openai : null,
+            config_webhook: hasW ? config_webhook : null,
             auth_token: auth_token ?? null,
-          }).select("id,name,api_type,config,created_at").single();
+          }).select("id,name,api_type,config,config_openai,config_webhook,created_at").single();
+          if (error) return json({ error: error.message }, 400);
+          return json({ target: data });
+        }
+        case "update_target": {
+          const { id, name, config_openai, config_webhook, auth_token } = body;
+          if (!id) return json({ error: "id required" }, 400);
+          const patch: any = {};
+          if (name !== undefined) patch.name = name;
+          if (config_openai !== undefined) patch.config_openai = config_openai;
+          if (config_webhook !== undefined) patch.config_webhook = config_webhook;
+          if (auth_token !== undefined) patch.auth_token = auth_token;
+          const hasO = config_openai && Object.keys(config_openai).length > 0;
+          const hasW = config_webhook && Object.keys(config_webhook).length > 0;
+          if (hasO || hasW) patch.api_type = hasO && hasW ? "dual" : (hasO ? "openai" : "webhook");
+          const { data, error } = await sb.from("agent_targets").update(patch).eq("id", id)
+            .select("id,name,api_type,config_openai,config_webhook").single();
           if (error) return json({ error: error.message }, 400);
           return json({ target: data });
         }
@@ -521,13 +566,14 @@ Deno.serve(async (req) => {
           return json({ ok: true });
         }
         case "ping_target": {
-          const { id, sample_input } = body;
+          const { id, sample_input, transport } = body;
           if (!id) return json({ error: "id required" }, 400);
           const { data: t, error } = await sb.from("agent_targets").select("*").eq("id", id).single();
           if (error || !t) return json({ error: "target not found" }, 404);
-          const out = await callAgent(t, sample_input ?? "Hello, please introduce yourself in one sentence.");
-          return json({ ok: !out.error, response: out.text, status: out.status, error: out.error, latency_ms: out.ms });
+          const out = await callAgent(t, sample_input ?? "Hello, please introduce yourself in one sentence.", undefined, transport);
+          return json({ ok: !out.error, response: out.text, status: out.status, error: out.error, latency_ms: out.ms, transport: transport ?? null });
         }
+
 
         // ---------------------- Plans CRUD ----------------------
         case "list_plans": {
@@ -547,8 +593,9 @@ Deno.serve(async (req) => {
           return json({ plan, scenarios: scenarios ?? [] });
         }
         case "create_plan": {
-          const { name, agent_target_id, objectives, question_count, weights } = body;
+          const { name, agent_target_id, objectives, question_count, weights, transport } = body;
           if (!agent_target_id) return json({ error: "agent_target_id required" }, 400);
+          const t = transport === "webhook" ? "webhook" : "openai";
           const { data, error } = await sb.from("eval_plans").insert({
             name: name ?? "New plan",
             agent_target_id,
@@ -556,10 +603,12 @@ Deno.serve(async (req) => {
             question_count: Math.min(1000, Math.max(20, Number(question_count ?? 200))),
             weights: weights ?? { faithfulness: 1, relevance: 1, safety: 1, robustness: 1 },
             status: "draft",
+            transport: t,
           }).select().single();
           if (error) return json({ error: error.message }, 400);
           return json({ plan: data });
         }
+
         case "delete_plan": {
           const { id } = body;
           if (!id) return json({ error: "id required" }, 400);
@@ -712,7 +761,7 @@ Deno.serve(async (req) => {
             const sc = slice[i];
             const t0 = Date.now();
             const firstUser = sc.turns?.find?.((t: any) => t.role === "user")?.content ?? "";
-            const agent = await callAgent(target, firstUser, sc.turns);
+            const agent = await callAgent(target, firstUser, sc.turns, plan.transport);
             const lat = Date.now() - t0;
             latencies.push(lat);
             totalTokens += agent.tokens_in + agent.tokens_out;
@@ -801,7 +850,7 @@ Deno.serve(async (req) => {
           const { run_id } = body;
           if (!run_id) return json({ error: "run_id required" }, 400);
           const [{ data: run }, { data: results }] = await Promise.all([
-            sb.from("eval_runs").select("*, eval_plans(name, objectives, agent_targets(name))").eq("id", run_id).single(),
+            sb.from("eval_runs").select("*, eval_plans(name, objectives, transport, agent_targets(name))").eq("id", run_id).single(),
             sb.from("eval_results").select("*").eq("run_id", run_id).order("created_at", { ascending: true }),
           ]);
           return json({ run, results: results ?? [] });
