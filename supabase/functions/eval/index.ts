@@ -146,7 +146,7 @@ async function computeProductivity(sb: any, days: number): Promise<any> {
 // Main handler
 // ---------------------------------------------------------------------------
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return applyDashboardCors(req, new Response("ok"));
+  if (req.method === "OPTIONS") return applyDashboardCors(new Response("ok"), req);
 
   const inner = await (async (): Promise<Response> => {
     try {
@@ -335,5 +335,5 @@ Deno.serve(async (req) => {
     }
   })();
 
-  return applyDashboardCors(req, inner);
+  return applyDashboardCors(inner);
 });
