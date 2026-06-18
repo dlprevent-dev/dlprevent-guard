@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.dashboard]
 verify_jwt = false
+
+[functions.eval]
+verify_jwt = false
