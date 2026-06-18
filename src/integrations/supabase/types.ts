@@ -309,6 +309,257 @@ export type Database = {
         }
         Relationships: []
       }
+      eval_results: {
+        Row: {
+          cost_usd: number | null
+          created_at: string
+          error_message: string | null
+          grader_scores: Json
+          id: string
+          latency_ms: number
+          passed: boolean
+          request_log_id: string | null
+          response_text: string | null
+          run_id: string
+          scenario_id: string | null
+          scenario_name: string
+          tokens_in: number
+          tokens_out: number
+          user_id: string
+          verdict: string | null
+        }
+        Insert: {
+          cost_usd?: number | null
+          created_at?: string
+          error_message?: string | null
+          grader_scores?: Json
+          id?: string
+          latency_ms?: number
+          passed?: boolean
+          request_log_id?: string | null
+          response_text?: string | null
+          run_id: string
+          scenario_id?: string | null
+          scenario_name: string
+          tokens_in?: number
+          tokens_out?: number
+          user_id: string
+          verdict?: string | null
+        }
+        Update: {
+          cost_usd?: number | null
+          created_at?: string
+          error_message?: string | null
+          grader_scores?: Json
+          id?: string
+          latency_ms?: number
+          passed?: boolean
+          request_log_id?: string | null
+          response_text?: string | null
+          run_id?: string
+          scenario_id?: string | null
+          scenario_name?: string
+          tokens_in?: number
+          tokens_out?: number
+          user_id?: string
+          verdict?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "eval_results_request_log_id_fkey"
+            columns: ["request_log_id"]
+            isOneToOne: false
+            referencedRelation: "request_logs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eval_results_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "eval_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eval_results_scenario_id_fkey"
+            columns: ["scenario_id"]
+            isOneToOne: false
+            referencedRelation: "eval_scenarios"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eval_results_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["clerk_user_id"]
+          },
+        ]
+      }
+      eval_runs: {
+        Row: {
+          created_at: string
+          error_message: string | null
+          finished_at: string | null
+          id: string
+          started_at: string
+          status: string
+          suite_id: string
+          summary: Json
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          error_message?: string | null
+          finished_at?: string | null
+          id?: string
+          started_at?: string
+          status?: string
+          suite_id: string
+          summary?: Json
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          error_message?: string | null
+          finished_at?: string | null
+          id?: string
+          started_at?: string
+          status?: string
+          suite_id?: string
+          summary?: Json
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "eval_runs_suite_id_fkey"
+            columns: ["suite_id"]
+            isOneToOne: false
+            referencedRelation: "eval_suites"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eval_runs_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["clerk_user_id"]
+          },
+        ]
+      }
+      eval_scenarios: {
+        Row: {
+          category: string
+          context: Json | null
+          created_at: string
+          enabled: boolean
+          expected: Json | null
+          id: string
+          name: string
+          source: string
+          suite_id: string | null
+          turns: Json
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          category?: string
+          context?: Json | null
+          created_at?: string
+          enabled?: boolean
+          expected?: Json | null
+          id?: string
+          name: string
+          source?: string
+          suite_id?: string | null
+          turns?: Json
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          category?: string
+          context?: Json | null
+          created_at?: string
+          enabled?: boolean
+          expected?: Json | null
+          id?: string
+          name?: string
+          source?: string
+          suite_id?: string | null
+          turns?: Json
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "eval_scenarios_suite_id_fkey"
+            columns: ["suite_id"]
+            isOneToOne: false
+            referencedRelation: "eval_suites"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eval_scenarios_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["clerk_user_id"]
+          },
+        ]
+      }
+      eval_suites: {
+        Row: {
+          created_at: string
+          description: string | null
+          enabled: boolean
+          endpoint_id: string | null
+          grader_config: Json
+          id: string
+          model_alias: string | null
+          name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          enabled?: boolean
+          endpoint_id?: string | null
+          grader_config?: Json
+          id?: string
+          model_alias?: string | null
+          name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          enabled?: boolean
+          endpoint_id?: string | null
+          grader_config?: Json
+          id?: string
+          model_alias?: string | null
+          name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "eval_suites_endpoint_id_fkey"
+            columns: ["endpoint_id"]
+            isOneToOne: false
+            referencedRelation: "endpoints"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eval_suites_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["clerk_user_id"]
+          },
+        ]
+      }
       key_behavior_profiles: {
         Row: {
           api_key_id: string
@@ -549,6 +800,7 @@ export type Database = {
           enable_cross_tenant_guard: boolean
           enable_deep_trace: boolean
           enable_egress_filter: boolean
+          enable_evaluation: boolean
           enable_fuzzy_keywords: boolean
           enable_heuristics: boolean
           enable_injection_guard: boolean
@@ -616,6 +868,7 @@ export type Database = {
           enable_cross_tenant_guard?: boolean
           enable_deep_trace?: boolean
           enable_egress_filter?: boolean
+          enable_evaluation?: boolean
           enable_fuzzy_keywords?: boolean
           enable_heuristics?: boolean
           enable_injection_guard?: boolean
@@ -683,6 +936,7 @@ export type Database = {
           enable_cross_tenant_guard?: boolean
           enable_deep_trace?: boolean
           enable_egress_filter?: boolean
+          enable_evaluation?: boolean
           enable_fuzzy_keywords?: boolean
           enable_heuristics?: boolean
           enable_injection_guard?: boolean

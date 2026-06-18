@@ -17,6 +17,9 @@ import {
   ShieldQuestion,
   ListChecks,
   Search,
+  Gauge,
+  ClipboardCheck,
+  Sparkle,
   X,
 } from "lucide-react";
 import {
@@ -71,6 +74,15 @@ const groups: { id: string; label: string; items: NavItem[] }[] = [
       { to: "/dashboard/threats", label: "Threats", icon: ShieldAlert },
       { to: "/dashboard/alerts", label: "Alerts", icon: BellRing },
       { to: "/dashboard/logs", label: "Logs", icon: ScrollText },
+    ],
+  },
+  {
+    id: "evaluate",
+    label: "Evaluate",
+    items: [
+      { to: "/dashboard/evaluate/productivity", label: "Productivity", icon: Gauge },
+      { to: "/dashboard/evaluate/suites", label: "Test Suites", icon: ClipboardCheck },
+      { to: "/dashboard/evaluate/scenarios", label: "Scenarios", icon: Sparkle },
     ],
   },
   {
