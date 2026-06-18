@@ -800,6 +800,7 @@ Deno.serve(async (req) => {
             }
 
             await sb.from("eval_results").insert({
+              user_id: userId,
               run_id: runRow.id,
               scenario_id: sc.id,
               scenario_name: sc.name,
