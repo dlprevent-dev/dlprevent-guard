@@ -458,18 +458,21 @@ export function StepGenerate() {
     queryFn: () => call("get_plan", { id: planId }),
     enabled: !!planId,
     refetchInterval: (q) =>
-      q.state.data?.plan?.status === "generating" || q.state.data?.plan?.status === "draft" ? 2500 : false,
+      q.state.data?.plan?.status === "generating" ? 2500 : false,
   });
 
   useEffect(() => {
     if (!planId || started) return;
     const status = planQ.data?.plan?.status;
-    if (status && status !== "draft") return; // already generating or generated
+    const hasErr = planQ.data?.plan?.summary?.errors && Object.keys(planQ.data.plan.summary.errors).length > 0;
+    if (!status) return; // wait for first fetch
+    if (status !== "draft" || hasErr) return; // already started, finished, or failed — don't re-trigger
     setStarted(true);
     call("generate_plan_scenarios", { plan_id: planId })
       .then(() => qc.invalidateQueries({ queryKey: ["eval-plan", planId] }))
       .catch((e: Error) => setError(e.message));
   }, [planId, planQ.data?.plan?.status, started]);
+
 
   const plan = planQ.data?.plan;
   const total = plan?.question_count ?? 0;
