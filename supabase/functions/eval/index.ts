@@ -425,6 +425,7 @@ Deno.serve(async (req) => {
           }
           const scenarios = Array.isArray(parsed?.scenarios) ? parsed.scenarios.slice(0, n) : [];
           const rows = scenarios.map((s: any) => ({
+            user_id: userId,
             name: String(s.name ?? "Generated scenario").slice(0, 200),
             category: ["happy_path","edge_case","adversarial","tool_misuse","long_horizon","safety","retrieval"].includes(s.category) ? s.category : "happy_path",
             turns: Array.isArray(s.turns) ? s.turns : [{ role: "user", content: String(s.input ?? "Test") }],
