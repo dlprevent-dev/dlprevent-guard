@@ -95,6 +95,10 @@ const App = () => (
               <Route path="evaluate/productivity" element={<EvalProductivity />} />
               <Route path="evaluate/suites" element={<EvalSuites />} />
               <Route path="evaluate/scenarios" element={<EvalScenarios />} />
+              <Route path="evaluate/test-lab" element={<TestLab />} />
+              <Route path="evaluate/test-lab/review/:planId" element={<PlanReview />} />
+              <Route path="evaluate/test-lab/report/:runId" element={<PlanReport />} />
+
             </Route>
             <Route path="/docs" element={<DocsLayout />}>
               <Route index element={<DocsOverview />} />
