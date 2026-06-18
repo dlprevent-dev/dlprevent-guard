@@ -593,8 +593,9 @@ Deno.serve(async (req) => {
           return json({ plan, scenarios: scenarios ?? [] });
         }
         case "create_plan": {
-          const { name, agent_target_id, objectives, question_count, weights } = body;
+          const { name, agent_target_id, objectives, question_count, weights, transport } = body;
           if (!agent_target_id) return json({ error: "agent_target_id required" }, 400);
+          const t = transport === "webhook" ? "webhook" : "openai";
           const { data, error } = await sb.from("eval_plans").insert({
             name: name ?? "New plan",
             agent_target_id,
@@ -602,10 +603,12 @@ Deno.serve(async (req) => {
             question_count: Math.min(1000, Math.max(20, Number(question_count ?? 200))),
             weights: weights ?? { faithfulness: 1, relevance: 1, safety: 1, robustness: 1 },
             status: "draft",
+            transport: t,
           }).select().single();
           if (error) return json({ error: error.message }, 400);
           return json({ plan: data });
         }
+
         case "delete_plan": {
           const { id } = body;
           if (!id) return json({ error: "id required" }, 400);
