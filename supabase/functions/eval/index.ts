@@ -17,13 +17,15 @@ async function safeJson(req: Request): Promise<any> {
 }
 
 // ---------------------------------------------------------------------------
-// Lovable AI Gateway helper — used by `generate_scenarios` and the
-// llm_judge grader. No extra secret needed; LOVABLE_API_KEY is preset.
+// AI helpers
+//  - Lovable AI Gateway: used by `generate_scenarios` (no extra secret).
+//  - OpenRouter: used by the llm_judge grader with gemini-3.1-flash-lite.
 // ---------------------------------------------------------------------------
 const LOVABLE_AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
-const DEFAULT_JUDGE_MODEL = "google/gemini-2.5-flash";
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const JUDGE_MODEL = "google/gemini-3.1-flash-lite";
 
-async function callLovableAi(messages: any[], model: string = DEFAULT_JUDGE_MODEL): Promise<string> {
+async function callLovableAi(messages: any[], model = "google/gemini-2.5-flash"): Promise<string> {
   const key = Deno.env.get("LOVABLE_API_KEY");
   if (!key) throw new Error("LOVABLE_API_KEY not configured");
   const res = await fetch(LOVABLE_AI_URL, {
@@ -31,10 +33,25 @@ async function callLovableAi(messages: any[], model: string = DEFAULT_JUDGE_MODE
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
     body: JSON.stringify({ model, messages, temperature: 0.2 }),
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Lovable AI ${res.status}: ${text.slice(0, 200)}`);
-  }
+  if (!res.ok) throw new Error(`Lovable AI ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const data = await res.json();
+  return data?.choices?.[0]?.message?.content ?? "";
+}
+
+async function callOpenRouter(messages: any[], model = JUDGE_MODEL): Promise<string> {
+  const key = Deno.env.get("OPENROUTER_API_KEY");
+  if (!key) throw new Error("OPENROUTER_API_KEY not configured");
+  const res = await fetch(OPENROUTER_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://guard.citerlabs.com",
+      "X-Title": "AnveGuard Eval Judge",
+    },
+    body: JSON.stringify({ model, messages, temperature: 0.1, response_format: { type: "json_object" } }),
+  });
+  if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data = await res.json();
   return data?.choices?.[0]?.message?.content ?? "";
 }
@@ -71,34 +88,40 @@ function graderRegex(response: string, expected: any): GraderResult {
   }
 }
 
-async function graderLlmJudge(response: string, expected: any, scenarioName: string): Promise<GraderResult> {
+async function graderLlmJudge(response: string, expected: any, scenarioName: string, userInput = ""): Promise<GraderResult> {
   const criteria = String(expected?.criteria ?? "The response is correct, helpful, and on-topic.");
-  const prompt = `You are an impartial evaluator. Score the assistant's response from 0.0 to 1.0 against the criteria.\n\nScenario: ${scenarioName}\n\nCriteria:\n${criteria}\n\nResponse to evaluate:\n"""\n${response.slice(0, 4000)}\n"""\n\nReply with strict JSON only: {"score": <0-1>, "passed": <bool>, "rationale": "<one sentence>"}`;
+  const system = `You are an impartial evaluator scoring an AI assistant's reply. Output ONLY strict JSON: {"score": number 0-1, "passed": boolean, "rationale": "one sentence"}. passed=true iff score >= 0.7.`;
+  const user = `Scenario: ${scenarioName}\n\nUser input:\n"""${userInput.slice(0, 2000)}"""\n\nCriteria:\n${criteria}\n\nAssistant response:\n"""${response.slice(0, 4000)}"""`;
   try {
-    const out = await callLovableAi([{ role: "user", content: prompt }]);
+    const out = await callOpenRouter([
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ]);
     const match = out.match(/\{[\s\S]*\}/);
     if (!match) return { grader: "llm_judge", passed: false, score: 0, rationale: "Judge returned no JSON" };
     const parsed = JSON.parse(match[0]);
+    const score = typeof parsed.score === "number" ? Math.max(0, Math.min(1, parsed.score)) : 0;
     return {
       grader: "llm_judge",
-      passed: Boolean(parsed.passed ?? parsed.score >= 0.7),
-      score: typeof parsed.score === "number" ? parsed.score : 0,
+      passed: Boolean(parsed.passed ?? score >= 0.7),
+      score,
       rationale: String(parsed.rationale ?? "").slice(0, 300),
     };
   } catch (e) {
-    return { grader: "llm_judge", passed: false, score: 0, rationale: `Judge error: ${e instanceof Error ? e.message.slice(0, 120) : e}` };
+    return { grader: "llm_judge", passed: false, score: 0, rationale: `Judge error: ${e instanceof Error ? e.message.slice(0, 160) : e}` };
   }
 }
 
 async function runGraders(graders: any[], response: string, scenario: any): Promise<GraderResult[]> {
   const out: GraderResult[] = [];
+  const firstUser = scenario?.turns?.find?.((t: any) => t.role === "user")?.content ?? "";
   for (const g of graders ?? []) {
     const kind = g?.kind;
     const exp = { ...(scenario.expected ?? {}), ...(g?.config ?? {}) };
     if (kind === "exact") out.push(graderExact(response, exp));
     else if (kind === "contains") out.push(graderContains(response, exp));
     else if (kind === "regex") out.push(graderRegex(response, exp));
-    else if (kind === "llm_judge") out.push(await graderLlmJudge(response, exp, scenario.name));
+    else if (kind === "llm_judge") out.push(await graderLlmJudge(response, exp, scenario.name, firstUser));
   }
   return out;
 }
