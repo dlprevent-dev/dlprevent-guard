@@ -367,19 +367,19 @@ Deno.serve(async (req) => {
           let passed = 0, failed = 0;
           const latencies: number[] = [];
           let totalTokens = 0;
+          const agentModel = suite.grader_config?.agent_model ?? "google/gemini-3.1-flash-lite";
           for (const sc of list) {
             const t0 = Date.now();
-            // For v1 we use the LLM judge against the scenario's expected criteria
-            // without actually hitting an upstream model — that gives a fast,
-            // deterministic-enough scoring loop. Full proxy fan-out comes in a
-            // follow-up (it needs API keys + endpoint routing).
-            const firstUser = sc.turns?.find((t: any) => t.role === "user")?.content ?? "";
-            const synthesizedResponse = `(no upstream — judging against criteria) ${firstUser}`.slice(0, 200);
+            // Run the conversation through an upstream agent (OpenRouter)
+            // so the judge has a real response to score. If OPENROUTER_API_KEY
+            // is missing, simulateAgentResponse() falls back to a stub.
+            const agent = await simulateAgentResponse(sc.turns ?? [], agentModel);
             const graders = (suite.grader_config?.graders ?? [{ kind: "llm_judge", config: { criteria: sc.expected?.criteria ?? "Response is helpful and on-topic." } }]);
-            const scores = await runGraders(graders, synthesizedResponse, sc);
+            const scores = await runGraders(graders, agent.text, sc);
             const scenarioPassed = scores.length > 0 && scores.every((s) => s.passed);
             const lat = Date.now() - t0;
             latencies.push(lat);
+            totalTokens += agent.tokens_in + agent.tokens_out;
             if (scenarioPassed) passed++; else failed++;
             await sb.from("eval_results").insert({
               run_id: runRow.id,
@@ -388,9 +388,10 @@ Deno.serve(async (req) => {
               passed: scenarioPassed,
               verdict: scenarioPassed ? "pass" : "fail",
               grader_scores: scores,
-              response_text: synthesizedResponse,
+              response_text: agent.text,
               latency_ms: lat,
-              tokens_in: 0, tokens_out: 0,
+              tokens_in: agent.tokens_in,
+              tokens_out: agent.tokens_out,
             });
           }
           latencies.sort((a, b) => a - b);
