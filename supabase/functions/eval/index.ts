@@ -467,6 +467,7 @@ Deno.serve(async (req) => {
           if (list.length === 0) return json({ error: "Suite has no enabled scenarios" }, 400);
 
           const { data: runRow, error: rErr } = await sb.from("eval_runs").insert({
+            user_id: userId,
             suite_id, status: "running", summary: { total: list.length, passed: 0, failed: 0 },
           }).select().single();
           if (rErr || !runRow) return json({ error: rErr?.message ?? "Could not create run" }, 500);
