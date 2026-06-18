@@ -850,7 +850,7 @@ Deno.serve(async (req) => {
           const { run_id } = body;
           if (!run_id) return json({ error: "run_id required" }, 400);
           const [{ data: run }, { data: results }] = await Promise.all([
-            sb.from("eval_runs").select("*, eval_plans(name, objectives, agent_targets(name))").eq("id", run_id).single(),
+            sb.from("eval_runs").select("*, eval_plans(name, objectives, transport, agent_targets(name))").eq("id", run_id).single(),
             sb.from("eval_results").select("*").eq("run_id", run_id).order("created_at", { ascending: true }),
           ]);
           return json({ run, results: results ?? [] });
