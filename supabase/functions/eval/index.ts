@@ -24,7 +24,9 @@ async function safeJson(req: Request): Promise<any> {
 const LOVABLE_AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const JUDGE_MODEL = "google/gemini-3.1-flash-lite";
-const JUDGE_MODEL_B = "z-ai/glm-4.6";
+const JUDGE_MODEL_B = "z-ai/glm-5.2";
+const JUDGE_A_LABEL = "gemini-3.1-flash-lite";
+const JUDGE_B_LABEL = "glm-5.2";
 
 
 async function callLovableAi(messages: any[], model = "google/gemini-2.5-flash"): Promise<string> {
