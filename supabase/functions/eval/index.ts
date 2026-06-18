@@ -203,11 +203,28 @@ function getByPath(obj: any, path: string): any {
   }, obj);
 }
 
-async function callAgent(target: any, input: string, turns?: any[]): Promise<AgentCallResult> {
+// Pick the active sub-config for a target+transport. Falls back to legacy
+// `config` field for targets created before dual-config support.
+function resolveTargetConfig(target: any, transport?: string): { kind: "openai" | "webhook"; cfg: any } {
+  const wantOpenai = target.config_openai && Object.keys(target.config_openai).length > 0;
+  const wantWebhook = target.config_webhook && Object.keys(target.config_webhook).length > 0;
+  let kind: "openai" | "webhook";
+  if (transport === "openai" || transport === "webhook") {
+    kind = transport;
+  } else if (wantOpenai && !wantWebhook) kind = "openai";
+  else if (wantWebhook && !wantOpenai) kind = "webhook";
+  else kind = (target.api_type === "webhook" ? "webhook" : "openai");
+  const cfg = kind === "openai"
+    ? (target.config_openai ?? (target.api_type === "openai" ? target.config : null) ?? {})
+    : (target.config_webhook ?? (target.api_type === "webhook" ? target.config : null) ?? {});
+  return { kind, cfg };
+}
+
+async function callAgent(target: any, input: string, turns?: any[], transport?: string): Promise<AgentCallResult> {
   const t0 = Date.now();
-  const cfg = target.config ?? {};
+  const { kind, cfg } = resolveTargetConfig(target, transport);
   try {
-    if (target.api_type === "openai") {
+    if (kind === "openai") {
       const baseUrl = String(cfg.base_url ?? "https://api.openai.com/v1").replace(/\/+$/, "");
       const model = String(cfg.model ?? "gpt-4o-mini");
       const messages: any[] = [];
@@ -217,11 +234,12 @@ async function callAgent(target: any, input: string, turns?: any[]): Promise<Age
       } else {
         messages.push({ role: "user", content: input });
       }
+      const token = cfg.auth_token ?? target.auth_token;
       const res = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(target.auth_token ? { Authorization: `Bearer ${target.auth_token}` } : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ model, messages, temperature: 0.4, max_tokens: 600 }),
       });
@@ -238,12 +256,13 @@ async function callAgent(target: any, input: string, turns?: any[]): Promise<Age
         status: res.status,
       };
     }
-    // generic webhook
+    // webhook
     const url = String(cfg.url ?? "");
     if (!url) return { text: "", tokens_in: 0, tokens_out: 0, ms: Date.now() - t0, status: 0, error: "webhook url missing" };
     const method = String(cfg.method ?? "POST").toUpperCase();
     const headers: Record<string, string> = { "Content-Type": "application/json", ...(cfg.headers ?? {}) };
-    if (target.auth_token && !headers.Authorization) headers.Authorization = `Bearer ${target.auth_token}`;
+    const token = cfg.auth_token ?? target.auth_token;
+    if (token && !headers.Authorization) headers.Authorization = `Bearer ${token}`;
     const tmpl = cfg.body_template ?? JSON.stringify({ input: "{{input}}" });
     const bodyStr = String(tmpl).replace(/\{\{input\}\}/g, JSON.stringify(input).slice(1, -1));
     const res = await fetch(url, { method, headers, body: method === "GET" ? undefined : bodyStr });
@@ -266,6 +285,7 @@ async function callAgent(target: any, input: string, turns?: any[]): Promise<Age
     return { text: "", tokens_in: 0, tokens_out: 0, ms: Date.now() - t0, status: 0, error: e instanceof Error ? e.message.slice(0, 200) : String(e) };
   }
 }
+
 
 // Productivity metrics — pure SQL aggregations over request_logs.
 // All queries are tenant-scoped via createTenantClient.
