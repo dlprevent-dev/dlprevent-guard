@@ -602,6 +602,7 @@ Deno.serve(async (req) => {
           if (!agent_target_id) return json({ error: "agent_target_id required" }, 400);
           const t = transport === "webhook" ? "webhook" : "openai";
           const { data, error } = await sb.from("eval_plans").insert({
+            user_id: userId,
             name: name ?? "New plan",
             agent_target_id,
             objectives: objectives ?? {},
