@@ -294,7 +294,7 @@ async function computeProductivity(sb: any, days: number): Promise<any> {
   const since = new Date(Date.now() - days * 86400_000).toISOString();
   const { data: rows, error } = await sb
     .from("request_logs")
-    .select("verdict, upstream_latency, latency_ms, total_tokens, prompt_tokens, completion_tokens, cost_usd, model, endpoint_id, api_key_id, blocked_layer, blocked_rule, created_at, response_tool_calls")
+    .select("verdict, upstream_latency_ms, latency_ms, total_tokens, prompt_tokens, completion_tokens, cost_usd, model, endpoint_id, api_key_id, blocked_layer, blocked_rule, created_at, response_tool_calls")
     .gte("created_at", since)
     .limit(10000);
   if (error) throw new Error(error.message);
