@@ -32,9 +32,9 @@ import RegressionTests from "./pages/dashboard/RegressionTests";
 import EvalProductivity from "./pages/dashboard/evaluate/Productivity";
 import EvalSuites from "./pages/dashboard/evaluate/Suites";
 import EvalScenarios from "./pages/dashboard/evaluate/Scenarios";
-import TestLab from "./pages/dashboard/evaluate/TestLab";
-import PlanReview from "./pages/dashboard/evaluate/PlanReview";
-import PlanReport from "./pages/dashboard/evaluate/PlanReport";
+import {
+  StepConnect, StepObjectives, StepGenerate, StepReview, StepRun, StepReport,
+} from "./pages/dashboard/evaluate/WizardTestLab";
 
 import SignInPage from "./pages/SignIn";
 import SignUpPage from "./pages/SignUp";
@@ -95,9 +95,12 @@ const App = () => (
               <Route path="evaluate/productivity" element={<EvalProductivity />} />
               <Route path="evaluate/suites" element={<EvalSuites />} />
               <Route path="evaluate/scenarios" element={<EvalScenarios />} />
-              <Route path="evaluate/test-lab" element={<TestLab />} />
-              <Route path="evaluate/test-lab/review/:planId" element={<PlanReview />} />
-              <Route path="evaluate/test-lab/report/:runId" element={<PlanReport />} />
+              <Route path="evaluate/test-lab" element={<StepConnect />} />
+              <Route path="evaluate/test-lab/objectives" element={<StepObjectives />} />
+              <Route path="evaluate/test-lab/generate/:planId" element={<StepGenerate />} />
+              <Route path="evaluate/test-lab/review/:planId" element={<StepReview />} />
+              <Route path="evaluate/test-lab/run/:planId" element={<StepRun />} />
+              <Route path="evaluate/test-lab/report/:runId" element={<StepReport />} />
 
             </Route>
             <Route path="/docs" element={<DocsLayout />}>

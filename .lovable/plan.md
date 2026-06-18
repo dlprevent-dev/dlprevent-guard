@@ -1,50 +1,48 @@
+# Test Lab Wizard
 
-# Dual-mode targets + tests
+Convert the existing Test Lab into a linear, step-by-step wizard that mirrors the flow you described. Each step is one focused screen with Back / Next controls and a progress indicator at the top. No step is skippable — the user moves through them in order.
 
-## 1. Side-by-side OpenAI + Webhook on one target
+## The 6 steps
 
-Right now `agent_targets.api_type` is `'openai' | 'webhook'` and `config` holds one or the other. Switch the target to a dual-config shape so a single saved agent can hold BOTH and the user picks which to use per run.
+```text
+[1 Connect] → [2 Objectives] → [3 Generate] → [4 Review] → [5 Run] → [6 Report]
+```
 
-### Schema (migration)
-- Drop the `agent_targets_api_type_check` constraint and widen `api_type` to `'openai' | 'webhook' | 'dual'`.
-- Add `config_openai JSONB` and `config_webhook JSONB`. Keep existing `config` for back-compat: a one-time UPDATE copies it into the matching new column.
-- Add `eval_plans.transport TEXT NOT NULL DEFAULT 'openai'` so each run records which side it used.
+**Step 1 — Connect your agent**
+One screen to enter the agent under test. Tabs for OpenAI-compatible API and Webhook (or both — dual mode). Inline "Test connection" button (calls `ping_target`) with green/red status before Next is enabled.
 
-### Backend (`supabase/functions/eval/index.ts`)
-- `create_target` / new `update_target`: accept `config_openai` and `config_webhook` (either or both), set `api_type = 'dual'` when both are present.
-- `ping_target`: accept `transport` arg (`openai` | `webhook`), default to whichever is configured.
-- `callAgent(target, input, turns, transport)`: read the right sub-config based on `transport`. Falls back to the legacy `config` field when the new columns are empty.
-- `create_plan` and `run_plan`: accept and persist `transport`; `run_plan` passes it through to `callAgent`.
+**Step 2 — Set objectives**
+User names the test plan and writes the objectives in plain language (what the agent is supposed to do, who it serves, what it must refuse). Optional fields: domain tags, tone, must-include/must-avoid phrases. A slider sets question count (10–500).
 
-### Frontend
-- **TestLab → Agent endpoints**: replace single-type form with two collapsible sections ("OpenAI-compatible" and "Webhook") that can both be filled. Saved-endpoint card shows badges for which transports are configured and a "Test" dropdown to ping each.
-- **New test run wizard**: when the chosen target has both, show a transport selector (radio: OpenAI / Webhook). When only one is configured, lock to that.
-- **Plan list / report**: show the transport used as a small badge.
+**Step 3 — Judges generate questions**
+Auto-runs `generate_plan_scenarios` on entry. Live progress: "Gemini 2.5 Flash drafting… GLM-4.6 drafting… merging…". Shows a streaming counter as scenarios land. User waits — Next unlocks when generation completes.
 
-## 2. Testing
+**Step 4 — Review the question set**
+Full list of generated scenarios grouped by category, each with the prompt, expected behavior, and which judge proposed it. User can: edit a prompt inline, delete a scenario, regenerate a single one, or click "Approve all & continue". This is the human gate before any call hits their agent.
 
-### Edge function unit tests (`supabase/functions/eval/index_test.ts`)
-Extend the existing test file with Deno tests that call the deployed `eval` function end-to-end using the dev Clerk JWT pattern already in `index_test.ts`:
-- `create_target` with `config_openai` only → returns target with `api_type='openai'`.
-- `create_target` with both configs → `api_type='dual'`.
-- `ping_target` with `transport='openai'` against `https://api.openai.com/v1` using LOVABLE-style stub URL → expect a structured error (no token) rather than a crash, proves the path is exercised.
-- `ping_target` with `transport='webhook'` against `https://httpbin.org/post` with `body_template='{"q":"{{input}}"}'` and `response_path='json.q'` → expect echo of input.
-- `create_plan` + `generate_plan_scenarios` with `question_count=20` → expect ≥10 scenarios across ≥2 categories and both `author_judge` values present.
-- `approve_plan` + `run_plan` (still on httpbin webhook target) → expect a `run_id`, both `judge_a_score` and `judge_b_score` populated on results.
+**Step 5 — Run against the agent**
+On entry, calls `run_plan` with the chosen transport (OpenAI / Webhook / both side-by-side if dual). Live progress bar with current scenario, pass/fail counter, average latency, and a cancel button. Both judges score each response in parallel; scores are averaged.
 
-Run via `supabase--test_edge_functions` with `functions: ["eval"]`.
+**Step 6 — Report**
+Final results: overall score, confidence band (judge agreement), pass rate, latency, cost, per-category breakdown, and the flagged failures with judge rationale. Three actions at the bottom: **Re-test** (re-run same plan), **Refine** (jump back to Step 2 with current objectives pre-filled to make a new plan), **Export PDF**.
 
-### Browser smoke test
-After backend tests pass, drive the live preview:
-1. `browser--view_preview` → navigate to `/dashboard/evaluate/test-lab`.
-2. Create a webhook target pointing at `https://httpbin.org/post` with response path `json.input`.
-3. Click Test, confirm 200.
-4. Create a new run, count=20, generate, screenshot the review page.
-5. Approve & Run, screenshot the report page (axis bars, per-question results, judge A/B scores visible).
-6. Verify "Export PDF" opens the print dialog (don't actually save).
+## Layout & UX
 
-If any step fails, use `code--read_runtime_errors` + `supabase--edge_function_logs` to diagnose, fix, and re-run.
+- Sticky top wizard header with numbered steps, current step highlighted, completed steps checkmarked and clickable to go back (read-only).
+- Single centered column, max-w-3xl, generous vertical spacing.
+- Bottom action bar: `← Back` left, `Next →` / `Approve & Continue` / `Export` right.
+- Browser back/forward maps to wizard back/forward via route params: `/dashboard/evaluate/wizard/:planId?/:step`.
+
+## Technical notes
+
+- New route `WizardTestLab.tsx` replaces the current TestLab cards layout; old TestLab kept as `/dashboard/evaluate/lab/legacy` for one release in case you want to compare.
+- Wizard state lives in URL + DB (`eval_plans` row created at Step 2, so refresh-safe). Each step reads/writes the same plan row.
+- Step 3 polls `eval_plans.status` until `generated`; Step 5 polls `eval_results` count vs `eval_plans.question_count` for progress.
+- No schema changes. Reuses existing edge function actions: `create_target`, `ping_target`, `create_plan`, `generate_plan_scenarios`, `update_scenario`, `approve_plan`, `run_plan`, `report`.
+- Existing `PlanReview.tsx` and `PlanReport.tsx` content is folded into Steps 4 and 6 of the wizard.
 
 ## Out of scope
-- Notification webhooks (post run summary to Slack/Discord) — separate feature.
-- Async/inbound callback webhooks — separate feature.
+
+- No changes to judge models, scoring math, or the edge function.
+- No new export formats beyond the existing PDF.
+- Notification/inbound webhooks remain out of scope.
