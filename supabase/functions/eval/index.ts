@@ -752,6 +752,7 @@ Deno.serve(async (req) => {
           const slice = list.slice(0, RUN_CAP);
 
           const { data: runRow, error: rErr } = await sb.from("eval_runs").insert({
+            user_id: userId,
             plan_id, agent_target_id: target.id, suite_id: null,
             status: "running", summary: { total: slice.length, passed: 0, failed: 0 },
           }).select().single();
