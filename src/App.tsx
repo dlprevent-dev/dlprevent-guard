@@ -88,6 +88,9 @@ const App = () => (
               <Route path="threats" element={<Threats />} />
               <Route path="alerts" element={<Alerts />} />
               <Route path="playground" element={<Playground />} />
+              <Route path="evaluate/productivity" element={<EvalProductivity />} />
+              <Route path="evaluate/suites" element={<EvalSuites />} />
+              <Route path="evaluate/scenarios" element={<EvalScenarios />} />
             </Route>
             <Route path="/docs" element={<DocsLayout />}>
               <Route index element={<DocsOverview />} />
