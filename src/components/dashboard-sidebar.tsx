@@ -17,6 +17,9 @@ import {
   ShieldQuestion,
   ListChecks,
   Search,
+  Gauge,
+  ClipboardCheck,
+  Sparkle,
   X,
 } from "lucide-react";
 import {
