@@ -458,24 +458,33 @@ export function StepGenerate() {
     queryFn: () => call("get_plan", { id: planId }),
     enabled: !!planId,
     refetchInterval: (q) =>
-      q.state.data?.plan?.status === "generating" || q.state.data?.plan?.status === "draft" ? 2500 : false,
+      q.state.data?.plan?.status === "generating" ? 2500 : false,
   });
 
   useEffect(() => {
     if (!planId || started) return;
     const status = planQ.data?.plan?.status;
-    if (status && status !== "draft") return; // already generating or generated
+    const hasErr = planQ.data?.plan?.summary?.errors && Object.keys(planQ.data.plan.summary.errors).length > 0;
+    if (!status) return; // wait for first fetch
+    if (status !== "draft" || hasErr) return; // already started, finished, or failed — don't re-trigger
     setStarted(true);
     call("generate_plan_scenarios", { plan_id: planId })
       .then(() => qc.invalidateQueries({ queryKey: ["eval-plan", planId] }))
       .catch((e: Error) => setError(e.message));
   }, [planId, planQ.data?.plan?.status, started]);
 
+
   const plan = planQ.data?.plan;
   const total = plan?.question_count ?? 0;
   const generated = plan?.summary?.generated ?? planQ.data?.scenarios?.length ?? 0;
   const pct = total ? Math.min(100, Math.round((generated / total) * 100)) : 0;
-  const isDone = plan && plan.status !== "generating" && plan.status !== "draft";
+  // "draft" with errors in summary = generation finished but failed; don't keep polling
+  const summary = plan?.summary ?? {};
+  const judgeErrors: Record<string, string> = summary.errors ?? {};
+  const hasJudgeErrors = Object.keys(judgeErrors).length > 0;
+  const isDone = plan && plan.status === "pending_review";
+  const isFailed = plan && plan.status === "draft" && hasJudgeErrors;
+  const judgeCounts: Record<string, number> = summary.judges ?? {};
 
   useEffect(() => {
     if (isDone && !error) {
@@ -484,11 +493,13 @@ export function StepGenerate() {
     }
   }, [isDone, planId, error, nav]);
 
+  const fatalError = error ?? judgeErrors.fatal;
+
   return (
     <WizardShell
       step="generate"
       title="Judges generating questions"
-      description="Gemini 2.5 Flash and GLM-4.6 are drafting test scenarios in parallel based on your objectives."
+      description="Gemini 3.1 Flash Lite and GLM-5.2 are drafting test scenarios in parallel based on your objectives."
       footer={
         <>
           <div />
@@ -500,26 +511,51 @@ export function StepGenerate() {
     >
       <Card>
         <CardContent className="p-8 space-y-4 text-center">
-          {error ? (
+          {fatalError ? (
             <>
               <AlertTriangle className="size-8 mx-auto text-destructive" />
               <div className="font-medium">Generation failed</div>
-              <pre className="text-xs text-muted-foreground whitespace-pre-wrap">{error}</pre>
+              <pre className="text-xs text-muted-foreground whitespace-pre-wrap">{fatalError}</pre>
               <Button variant="outline" onClick={() => { setError(null); setStarted(false); }}>Retry</Button>
             </>
           ) : (
             <>
-              <Sparkles className={`size-8 mx-auto text-primary ${!isDone ? "animate-pulse" : ""}`} />
+              <Sparkles className={`size-8 mx-auto text-primary ${!isDone && !isFailed ? "animate-pulse" : ""}`} />
               <div className="font-medium">
-                {isDone ? "Done — moving to review" : `Generated ${generated} of ${total}`}
+                {isDone ? "Done — moving to review"
+                  : isFailed ? "Both judges returned 0 scenarios"
+                  : `Generated ${generated} of ${total}`}
               </div>
               <div className="h-2 bg-muted rounded-full overflow-hidden max-w-md mx-auto">
                 <div className="h-full bg-primary transition-all" style={{ width: `${isDone ? 100 : pct}%` }} />
               </div>
               <div className="grid grid-cols-2 gap-3 max-w-md mx-auto text-xs text-left pt-2">
-                <div className="border rounded p-2"><div className="font-medium">Gemini 2.5 Flash</div><div className="text-muted-foreground">drafting…</div></div>
-                <div className="border rounded p-2"><div className="font-medium">GLM-4.6</div><div className="text-muted-foreground">drafting…</div></div>
+                <div className="border rounded p-2">
+                  <div className="font-medium">Gemini 3.1 Flash Lite</div>
+                  <div className="text-muted-foreground">
+                    {judgeCounts["gemini-3.1-flash-lite"] != null
+                      ? `${judgeCounts["gemini-3.1-flash-lite"]} scenarios`
+                      : "drafting…"}
+                  </div>
+                  {judgeErrors["gemini-3.1-flash-lite"] && (
+                    <div className="text-destructive mt-1 break-all">{judgeErrors["gemini-3.1-flash-lite"]}</div>
+                  )}
+                </div>
+                <div className="border rounded p-2">
+                  <div className="font-medium">GLM-5.2</div>
+                  <div className="text-muted-foreground">
+                    {judgeCounts["glm-5.2"] != null
+                      ? `${judgeCounts["glm-5.2"]} scenarios`
+                      : "drafting…"}
+                  </div>
+                  {judgeErrors["glm-5.2"] && (
+                    <div className="text-destructive mt-1 break-all">{judgeErrors["glm-5.2"]}</div>
+                  )}
+                </div>
               </div>
+              {isFailed && (
+                <Button variant="outline" onClick={() => { setError(null); setStarted(false); }}>Retry</Button>
+              )}
             </>
           )}
         </CardContent>
@@ -527,6 +563,7 @@ export function StepGenerate() {
     </WizardShell>
   );
 }
+
 
 // ---------------------------------------------------------------------------
 // Step 4 — Review
