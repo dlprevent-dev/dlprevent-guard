@@ -1,115 +1,97 @@
 
-# Add "Evaluation & Productivity" to AnveGuard
+# AgentAssure Test Lab — End-to-End Flow
 
-Bring AgentAssure-style capability into AnveGuard as a **new top-level section** in the dashboard, sitting alongside today's runtime governance (Policies, Logs, Threats, Regression Tests). The runtime side stays untouched — this adds the *pre-deploy quality* and *post-deploy ROI* lens that the business plan describes.
+A guided workflow under the **Evaluate** section that takes a user from "I have an agent API" to "here's a graded report" in five stages.
 
-## New sidebar section: "Evaluate"
+## User Flow
 
-Three new pages, grouped under a new "Evaluate" header in the dashboard sidebar:
+```text
+1. Connect Agent  →  2. Set Objectives  →  3. Generate Questions (Dual Judge)
+                                                    │
+                                                    ▼
+                                          4. Review / Approve / Edit
+                                                    │
+                                                    ▼
+                                          5. Run Against Agent
+                                                    │
+                                                    ▼
+                                          6. Scored Report (PDF export)
+                                          ↻ Retest  •  Update objectives
+```
 
-1. **Test Suites** — offline evaluation harness
-2. **Scenarios** — auto-generated multi-turn test cases
-3. **Productivity** — ROI / cost / latency dashboards
+## Stage Details
 
-Plus one new public docs page: **Docs → Evaluation**.
+### 1. Connect Agent
+- New page `dashboard/evaluate/TestLab` with a "New Test Run" wizard.
+- API type picker (auto-detect + manual override):
+  - **OpenAI-compatible**: base URL, model name, bearer token
+  - **Generic HTTP webhook**: method, URL, headers (KV editor), JSON body template with `{{input}}` placeholder, JSONPath for response text
+- "Test connection" button sends a ping payload and shows the raw response so the user can confirm parsing.
+- Stored in new `agent_targets` table (encrypted token via existing `KEY_ENCRYPTION_SECRET`).
 
----
+### 2. Set Objectives
+- Free-text "what should this agent do / not do" plus structured fields:
+  - Domain/role (e.g. "customer support for SaaS")
+  - Must-do behaviors (chips)
+  - Must-not-do / safety constraints (chips)
+  - Tone & style
+  - Reference docs (optional paste)
+- **Slider: question count** (20 → 1000, default 200)
+- Axis weights (faithfulness / relevance / safety / robustness) with sensible defaults.
 
-## 1. Test Suites (`/dashboard/evaluate/suites`)
+### 3. Generate Questions (Dual Judge)
+- Edge function `eval-generate` fans out to BOTH judges **in parallel**:
+  - `google/gemini-3.1-flash-lite` via OpenRouter
+  - `z-ai/glm-4.6` via OpenRouter (replacing the placeholder "5.2")
+- Each judge generates `N/2` scenarios across categories: happy-path, edge cases, adversarial/jailbreak, safety, out-of-scope, multi-turn.
+- Deduped + merged into one set. Stored in `eval_scenarios` linked to a new `eval_plans` row (status = `pending_review`).
+- Returns a **summary card**: counts per category, sample questions, estimated cost & runtime.
 
-Reuses and extends today's `regression_tests` table — same idea, bigger scope.
+### 4. Review / Approve / Edit
+- Table view of all generated questions with category, expected behavior, and which judge authored it.
+- Bulk actions: approve all, delete, regenerate selected, add custom question.
+- Inline edit of expected behavior.
+- "Approve & Run" locks the plan (`status = approved`) and triggers stage 5.
 
-- List view of suites (grouped runs of tests against a chosen endpoint + model)
-- Create suite: pick endpoint, model alias, dataset (CSV upload or scenarios from page 2), choose graders
-- Graders available out of the box:
-  - Exact / contains / regex (cheap, deterministic)
-  - **RAGAS-style retrieval**: faithfulness, answer relevance, context precision (when the request carries `context`)
-  - **LLM-as-judge** via Lovable AI Gateway (Gemini default — free during promo) with versioned judge prompts for reproducibility
-  - Safety: re-uses the existing 172-test attack corpus + injection guard
-- Run view: pass/fail per test, judge rationale, token spend, latency p50/p95, diff vs previous run
-- "Promote failing case → policy rule" button (closes the loop with our existing policy engine)
+### 5. Run Against Agent
+- Edge function `eval-run` iterates approved scenarios:
+  - Calls the user's agent API (with retries, timeout, latency capture)
+  - Sends agent response to **both judges in parallel**
+  - Final score = **average** of both judges per axis; disagreement (>0.3 delta) flagged for review
+- Streams progress to the UI via Supabase Realtime on `eval_runs` row.
+- Stores per-scenario: agent response, both judge scores, averaged score, confidence (1 − |delta|), tokens, latency.
 
-## 2. Scenarios (`/dashboard/evaluate/scenarios`)
+### 6. Report
+- Dashboard view: overall pass rate, per-axis radar, per-category bars, confidence distribution, flagged disagreements, top failures with rationales.
+- Actions:
+  - **Export PDF** (server-side render via edge function `eval-report-pdf` using a templated HTML → PDF)
+  - **Retest** (re-run same approved plan against the agent)
+  - **Update** (edit objectives / regenerate questions, fork into new plan)
 
-Automated scenario generation, the "Rhesis-style" capability from the brief.
+## Technical Details
 
-- Input: a short description of the agent's job + (optional) its system prompt
-- Generates N multi-turn scenarios across categories: happy path, edge case, adversarial, tool-misuse, long-horizon
-- Each scenario is saved as a row in a new `eval_scenarios` table and can be added to any suite
-- Generation uses Lovable AI Gateway; the prompt template is versioned so re-runs are reproducible
+### New tables (migration)
+- `agent_targets` — id, user_id, name, api_type (`openai`|`webhook`), config jsonb, encrypted_token, created_at
+- `eval_plans` — id, user_id, agent_target_id, objectives jsonb, question_count, weights jsonb, status (`pending_review`|`approved`|`archived`), summary jsonb
+- Extend `eval_scenarios` — add `plan_id`, `category`, `author_judge`, `approved` bool
+- Extend `eval_runs` — add `plan_id`, `progress` int, `flagged_count` int
+- Extend `eval_results` — add `judge_a_score`, `judge_b_score`, `confidence`, `disagreement` numeric, `judge_a_rationale`, `judge_b_rationale`
 
-## 3. Productivity (`/dashboard/evaluate/productivity`)
+All public tables get explicit GRANTs + RLS scoped to `auth.uid()`.
 
-ROI / operational dashboard. **No new data collection needed** — everything is already in `request_logs` (latency, tokens, tool calls, verdicts, request_id, upstream_latency).
+### Edge functions
+- `eval-agent-ping` — validates user's agent API connection
+- `eval-generate` — parallel dual-judge question generation
+- `eval-run` — executes approved plan, calls agent, parallel-judges results
+- `eval-report-pdf` — renders PDF from run results
 
-Tiles:
-- Task success rate (verdict = allow & no downstream error)
-- Cost per task (tokens × model price from `model_aliases`)
-- p50 / p95 latency, upstream vs total
-- Token efficiency trend (last 7 / 30 / 90 days)
-- Adoption: requests per API key, per endpoint, per team
-- Block / flag / allow mix over time
-- Top blocked rules and top tool calls
-- Filter by endpoint, model alias, date range, API key
+All judge + generation calls go through OpenRouter using existing `OPENROUTER_API_KEY`. Agent inference uses the user-provided endpoint, not OpenRouter.
 
-Exportable as CSV and as a shareable PDF report (same renderer used for the briefing PDF).
+### Frontend
+- Routes: `/dashboard/evaluate/test-lab`, `/test-lab/:planId/review`, `/test-lab/runs/:runId`
+- Components: `AgentConnectForm`, `ObjectivesForm`, `GenerationSummary`, `ScenarioReviewTable`, `RunProgress`, `ReportView`
+- Realtime subscription on `eval_runs` for live progress bar.
 
-## 4. Docs page
-
-New page at `/docs/evaluation` explaining: what eval is, how it differs from runtime guard, when to use each, how to wire a CI job that fails the build on regressions. Linked from `/docs/overview`.
-
----
-
-## How this lands relative to existing surface
-
-- **No removal, no rename.** Today's Logs, Policies, Threats, Regression Tests stay exactly where they are.
-- The existing **Regression Tests** page becomes the simplest case of a Test Suite (a suite with a single grader). We keep the page as-is and add a "View in Evaluate" link.
-- New section is **gated behind a feature flag** on `policy_settings` (`enable_evaluation`, default off) so existing tenants see no change until they opt in.
-
----
-
-## Technical details
-
-**Database (one migration, with GRANTs + RLS in the same migration per project rules):**
-
-- `eval_suites` — id, tenant_id, name, endpoint_id, model_alias, grader_config jsonb, created_at, created_by
-- `eval_scenarios` — id, tenant_id, suite_id (nullable), category, turns jsonb, expected jsonb, source ('generated' | 'manual' | 'imported'), created_at
-- `eval_runs` — id, tenant_id, suite_id, status, started_at, finished_at, summary jsonb (counts, p50, p95, cost)
-- `eval_results` — id, run_id, scenario_id, verdict, score numeric, judge_rationale text, tokens_in int, tokens_out int, latency_ms int, request_log_id (fk to request_logs)
-- Extend `policy_settings`: add `enable_evaluation boolean default false`
-
-All four new tables: RLS by `tenant_id = auth.uid()`-equivalent (same pattern as `regression_tests`), GRANT SELECT/INSERT/UPDATE/DELETE to `authenticated`, GRANT ALL to `service_role`.
-
-**Edge functions:**
-
-- New `eval-run` function: takes a suite_id, fans out scenarios through the existing `proxy` function (so every eval request gets the same governance), records results. Idempotent per (run_id, scenario_id).
-- New `eval-generate` function: calls Lovable AI Gateway (Gemini) to produce scenarios from a description; rate-limited, tenant-scoped.
-- Reuse the existing `proxy` for all model calls — no separate model integration, no new secrets.
-
-**Frontend (no backend changes for productivity):**
-
-- `src/pages/dashboard/evaluate/Suites.tsx`, `Scenarios.tsx`, `Productivity.tsx` (lazy-loaded routes)
-- Add 3 sidebar entries under a new "Evaluate" group in `src/components/dashboard-sidebar.tsx`
-- Productivity tiles are pure SQL against `request_logs` via `supabase--read_query` patterns already used by Overview / Logs
-- PDF export reuses the reportlab approach used for the client briefing, served from a new `report-export` edge function
-
-**No new third-party SaaS, no new paid API keys.** Everything runs on Lovable Cloud + Lovable AI Gateway.
-
-**Out of scope for this iteration** (can be follow-ups):
-- Integrating external benchmarks (GAIA, OSWorld, TerminalBench)
-- Cross-tenant industry benchmarking (raises real privacy questions)
-- A "judge model marketplace" — v1 ships with Gemini default + a single config field to point at any OpenAI-compatible endpoint
-
----
-
-## Rough order of work
-
-1. Migration + types regen
-2. Sidebar entry + empty page scaffolds (behind feature flag)
-3. Productivity page (fastest win — data already exists)
-4. Test Suites CRUD + `eval-run` edge function
-5. Scenarios CRUD + `eval-generate` edge function
-6. PDF export + docs page
-7. Feature-flag UI toggle in Policies → Feature Config
-
-Each step is independently shippable.
+### Out of scope (this plan)
+- CSV/JSON/Markdown exports (PDF only per your choice)
+- Scheduled recurring runs (can be added later via existing cron infra)
