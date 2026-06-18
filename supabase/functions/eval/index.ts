@@ -491,6 +491,7 @@ Deno.serve(async (req) => {
             totalTokens += agent.tokens_in + agent.tokens_out;
             if (scenarioPassed) passed++; else failed++;
             await sb.from("eval_results").insert({
+              user_id: userId,
               run_id: runRow.id,
               scenario_id: sc.id,
               scenario_name: sc.name,
