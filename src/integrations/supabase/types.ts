@@ -14,6 +14,47 @@ export type Database = {
   }
   public: {
     Tables: {
+      agent_targets: {
+        Row: {
+          api_type: string
+          auth_token: string | null
+          config: Json
+          created_at: string
+          id: string
+          name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          api_type?: string
+          auth_token?: string | null
+          config?: Json
+          created_at?: string
+          id?: string
+          name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          api_type?: string
+          auth_token?: string | null
+          config?: Json
+          created_at?: string
+          id?: string
+          name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_targets_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["clerk_user_id"]
+          },
+        ]
+      }
       alert_subscriptions: {
         Row: {
           audit_action_filter: string[] | null
@@ -309,13 +350,76 @@ export type Database = {
         }
         Relationships: []
       }
+      eval_plans: {
+        Row: {
+          agent_target_id: string | null
+          created_at: string
+          id: string
+          name: string
+          objectives: Json
+          question_count: number
+          status: string
+          summary: Json | null
+          updated_at: string
+          user_id: string
+          weights: Json
+        }
+        Insert: {
+          agent_target_id?: string | null
+          created_at?: string
+          id?: string
+          name?: string
+          objectives?: Json
+          question_count?: number
+          status?: string
+          summary?: Json | null
+          updated_at?: string
+          user_id: string
+          weights?: Json
+        }
+        Update: {
+          agent_target_id?: string | null
+          created_at?: string
+          id?: string
+          name?: string
+          objectives?: Json
+          question_count?: number
+          status?: string
+          summary?: Json | null
+          updated_at?: string
+          user_id?: string
+          weights?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "eval_plans_agent_target_id_fkey"
+            columns: ["agent_target_id"]
+            isOneToOne: false
+            referencedRelation: "agent_targets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eval_plans_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["clerk_user_id"]
+          },
+        ]
+      }
       eval_results: {
         Row: {
+          confidence: number | null
           cost_usd: number | null
           created_at: string
+          disagreement: number | null
           error_message: string | null
           grader_scores: Json
           id: string
+          judge_a_rationale: string | null
+          judge_a_score: number | null
+          judge_b_rationale: string | null
+          judge_b_score: number | null
           latency_ms: number
           passed: boolean
           request_log_id: string | null
@@ -329,11 +433,17 @@ export type Database = {
           verdict: string | null
         }
         Insert: {
+          confidence?: number | null
           cost_usd?: number | null
           created_at?: string
+          disagreement?: number | null
           error_message?: string | null
           grader_scores?: Json
           id?: string
+          judge_a_rationale?: string | null
+          judge_a_score?: number | null
+          judge_b_rationale?: string | null
+          judge_b_score?: number | null
           latency_ms?: number
           passed?: boolean
           request_log_id?: string | null
@@ -347,11 +457,17 @@ export type Database = {
           verdict?: string | null
         }
         Update: {
+          confidence?: number | null
           cost_usd?: number | null
           created_at?: string
+          disagreement?: number | null
           error_message?: string | null
           grader_scores?: Json
           id?: string
+          judge_a_rationale?: string | null
+          judge_a_score?: number | null
+          judge_b_rationale?: string | null
+          judge_b_score?: number | null
           latency_ms?: number
           passed?: boolean
           request_log_id?: string | null
@@ -397,39 +513,65 @@ export type Database = {
       }
       eval_runs: {
         Row: {
+          agent_target_id: string | null
           created_at: string
           error_message: string | null
           finished_at: string | null
+          flagged_count: number
           id: string
+          plan_id: string | null
+          progress: number
           started_at: string
           status: string
-          suite_id: string
+          suite_id: string | null
           summary: Json
           user_id: string
         }
         Insert: {
+          agent_target_id?: string | null
           created_at?: string
           error_message?: string | null
           finished_at?: string | null
+          flagged_count?: number
           id?: string
+          plan_id?: string | null
+          progress?: number
           started_at?: string
           status?: string
-          suite_id: string
+          suite_id?: string | null
           summary?: Json
           user_id: string
         }
         Update: {
+          agent_target_id?: string | null
           created_at?: string
           error_message?: string | null
           finished_at?: string | null
+          flagged_count?: number
           id?: string
+          plan_id?: string | null
+          progress?: number
           started_at?: string
           status?: string
-          suite_id?: string
+          suite_id?: string | null
           summary?: Json
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "eval_runs_agent_target_id_fkey"
+            columns: ["agent_target_id"]
+            isOneToOne: false
+            referencedRelation: "agent_targets"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eval_runs_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "eval_plans"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "eval_runs_suite_id_fkey"
             columns: ["suite_id"]
@@ -448,6 +590,8 @@ export type Database = {
       }
       eval_scenarios: {
         Row: {
+          approved: boolean
+          author_judge: string | null
           category: string
           context: Json | null
           created_at: string
@@ -455,6 +599,7 @@ export type Database = {
           expected: Json | null
           id: string
           name: string
+          plan_id: string | null
           source: string
           suite_id: string | null
           turns: Json
@@ -462,6 +607,8 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          approved?: boolean
+          author_judge?: string | null
           category?: string
           context?: Json | null
           created_at?: string
@@ -469,6 +616,7 @@ export type Database = {
           expected?: Json | null
           id?: string
           name: string
+          plan_id?: string | null
           source?: string
           suite_id?: string | null
           turns?: Json
@@ -476,6 +624,8 @@ export type Database = {
           user_id: string
         }
         Update: {
+          approved?: boolean
+          author_judge?: string | null
           category?: string
           context?: Json | null
           created_at?: string
@@ -483,6 +633,7 @@ export type Database = {
           expected?: Json | null
           id?: string
           name?: string
+          plan_id?: string | null
           source?: string
           suite_id?: string | null
           turns?: Json
@@ -490,6 +641,13 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "eval_scenarios_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "eval_plans"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "eval_scenarios_suite_id_fkey"
             columns: ["suite_id"]

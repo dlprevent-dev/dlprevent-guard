@@ -80,10 +80,12 @@ const groups: { id: string; label: string; items: NavItem[] }[] = [
     id: "evaluate",
     label: "Evaluate",
     items: [
+      { to: "/dashboard/evaluate/test-lab", label: "Test Lab", icon: FlaskConical },
       { to: "/dashboard/evaluate/productivity", label: "Productivity", icon: Gauge },
       { to: "/dashboard/evaluate/suites", label: "Test Suites", icon: ClipboardCheck },
       { to: "/dashboard/evaluate/scenarios", label: "Scenarios", icon: Sparkle },
     ],
+
   },
   {
     id: "tools",
