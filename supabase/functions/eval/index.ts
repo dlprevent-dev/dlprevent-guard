@@ -294,7 +294,7 @@ async function computeProductivity(sb: any, days: number): Promise<any> {
   const since = new Date(Date.now() - days * 86400_000).toISOString();
   const { data: rows, error } = await sb
     .from("request_logs")
-    .select("verdict, upstream_latency, latency_ms, total_tokens, prompt_tokens, completion_tokens, cost_usd, model, endpoint_id, api_key_id, blocked_layer, blocked_rule, created_at, response_tool_calls")
+    .select("verdict, upstream_latency_ms, latency_ms, total_tokens, prompt_tokens, completion_tokens, cost_usd, model, endpoint_id, api_key_id, blocked_layer, blocked_rule, created_at, response_tool_calls")
     .gte("created_at", since)
     .limit(10000);
   if (error) throw new Error(error.message);
@@ -303,7 +303,7 @@ async function computeProductivity(sb: any, days: number): Promise<any> {
   const allow = logs.filter((l: any) => l.verdict === "allow").length;
   const block = logs.filter((l: any) => l.verdict === "block").length;
   const flag = logs.filter((l: any) => l.verdict === "flag").length;
-  const latencies = logs.map((l: any) => Number(l.upstream_latency ?? l.latency_ms ?? 0)).filter((n: number) => n > 0).sort((a: number, b: number) => a - b);
+  const latencies = logs.map((l: any) => Number(l.upstream_latency_ms ?? l.latency_ms ?? 0)).filter((n: number) => n > 0).sort((a: number, b: number) => a - b);
   const pct = (p: number) => latencies.length ? latencies[Math.min(latencies.length - 1, Math.floor(latencies.length * p))] : 0;
   const totalTokens = logs.reduce((s: number, l: any) => s + Number(l.total_tokens ?? 0), 0);
   const totalCost = logs.reduce((s: number, l: any) => s + Number(l.cost_usd ?? 0), 0);
