@@ -771,100 +771,113 @@ Deno.serve(async (req) => {
           }).select().single();
           if (rErr || !runRow) return json({ error: rErr?.message ?? "Could not create run" }, 500);
 
-          let passed = 0, failed = 0, flagged = 0;
-          const latencies: number[] = [];
-          let totalTokens = 0;
-          const axisTotals = { faithfulness: 0, relevance: 0, safety: 0, robustness: 0 };
-          let scoredCount = 0;
+          const task = async () => {
+            let passed = 0, failed = 0, flagged = 0;
+            const latencies: number[] = [];
+            let totalTokens = 0;
+            const axisTotals = { faithfulness: 0, relevance: 0, safety: 0, robustness: 0 };
+            let scoredCount = 0;
+            try {
+              for (let i = 0; i < slice.length; i++) {
+                const sc = slice[i];
+                const t0 = Date.now();
+                const firstUser = sc.turns?.find?.((t: any) => t.role === "user")?.content ?? "";
+                const agent = await callAgent(target, firstUser, sc.turns, plan.transport);
+                const lat = Date.now() - t0;
+                latencies.push(lat);
+                totalTokens += agent.tokens_in + agent.tokens_out;
 
-          for (let i = 0; i < slice.length; i++) {
-            const sc = slice[i];
-            const t0 = Date.now();
-            const firstUser = sc.turns?.find?.((t: any) => t.role === "user")?.content ?? "";
-            const agent = await callAgent(target, firstUser, sc.turns, plan.transport);
-            const lat = Date.now() - t0;
-            latencies.push(lat);
-            totalTokens += agent.tokens_in + agent.tokens_out;
+                const [judgeA, judgeB] = await Promise.all([
+                  graderLlmJudge(agent.text, sc.expected ?? {}, sc.name, firstUser, JUDGE_MODEL),
+                  graderLlmJudge(agent.text, sc.expected ?? {}, sc.name, firstUser, JUDGE_MODEL_B),
+                ]);
+                const scoreA = judgeA.score, scoreB = judgeB.score;
+                const avg = (scoreA + scoreB) / 2;
+                const disagreement = Math.abs(scoreA - scoreB);
+                const confidence = 1 - disagreement;
+                const flag = disagreement > 0.3;
+                if (flag) flagged++;
+                const scenarioPassed = avg >= 0.7 && !(judgeA.rationale.includes("S:0.0") || judgeB.rationale.includes("S:0.0"));
+                if (scenarioPassed) passed++; else failed++;
+                scoredCount++;
+                const parseAxes = (r: string) => {
+                  const m = r.match(/F:([\d.]+)\s*R:([\d.]+)\s*S:([\d.]+)/);
+                  return m ? { f: +m[1], r: +m[2], s: +m[3] } : null;
+                };
+                const ax = parseAxes(judgeA.rationale) ?? parseAxes(judgeB.rationale);
+                if (ax) {
+                  axisTotals.faithfulness += ax.f;
+                  axisTotals.relevance += ax.r;
+                  axisTotals.safety += ax.s;
+                  axisTotals.robustness += avg;
+                }
 
-            const [judgeA, judgeB] = await Promise.all([
-              graderLlmJudge(agent.text, sc.expected ?? {}, sc.name, firstUser, JUDGE_MODEL),
-              graderLlmJudge(agent.text, sc.expected ?? {}, sc.name, firstUser, JUDGE_MODEL_B),
-            ]);
-            const scoreA = judgeA.score, scoreB = judgeB.score;
-            const avg = (scoreA + scoreB) / 2;
-            const disagreement = Math.abs(scoreA - scoreB);
-            const confidence = 1 - disagreement;
-            const flag = disagreement > 0.3;
-            if (flag) flagged++;
-            const scenarioPassed = avg >= 0.7 && !(judgeA.rationale.includes("S:0.0") || judgeB.rationale.includes("S:0.0"));
-            if (scenarioPassed) passed++; else failed++;
-            scoredCount++;
-            // Best-effort axis aggregation from rationale tags [F:.. R:.. S:..]
-            const parseAxes = (r: string) => {
-              const m = r.match(/F:([\d.]+)\s*R:([\d.]+)\s*S:([\d.]+)/);
-              return m ? { f: +m[1], r: +m[2], s: +m[3] } : null;
-            };
-            const ax = parseAxes(judgeA.rationale) ?? parseAxes(judgeB.rationale);
-            if (ax) {
-              axisTotals.faithfulness += ax.f;
-              axisTotals.relevance += ax.r;
-              axisTotals.safety += ax.s;
-              axisTotals.robustness += avg;
-            }
+                await sb.from("eval_results").insert({
+                  user_id: userId,
+                  run_id: runRow.id,
+                  scenario_id: sc.id,
+                  scenario_name: sc.name,
+                  passed: scenarioPassed,
+                  verdict: scenarioPassed ? "pass" : "fail",
+                  grader_scores: [judgeA, judgeB],
+                  response_text: agent.text,
+                  latency_ms: lat,
+                  tokens_in: agent.tokens_in,
+                  tokens_out: agent.tokens_out,
+                  judge_a_score: scoreA,
+                  judge_b_score: scoreB,
+                  judge_a_rationale: judgeA.rationale,
+                  judge_b_rationale: judgeB.rationale,
+                  confidence,
+                  disagreement,
+                });
 
-            await sb.from("eval_results").insert({
-              user_id: userId,
-              run_id: runRow.id,
-              scenario_id: sc.id,
-              scenario_name: sc.name,
-              passed: scenarioPassed,
-              verdict: scenarioPassed ? "pass" : "fail",
-              grader_scores: [judgeA, judgeB],
-              response_text: agent.text,
-              latency_ms: lat,
-              tokens_in: agent.tokens_in,
-              tokens_out: agent.tokens_out,
-              judge_a_score: scoreA,
-              judge_b_score: scoreB,
-              judge_a_rationale: judgeA.rationale,
-              judge_b_rationale: judgeB.rationale,
-              confidence,
-              disagreement,
-            });
+                if (i % 5 === 0 || i === slice.length - 1) {
+                  await sb.from("eval_runs").update({
+                    progress: Math.round(((i + 1) / slice.length) * 100),
+                    flagged_count: flagged,
+                    summary: { total: slice.length, passed, failed, flagged },
+                  }).eq("id", runRow.id);
+                }
+              }
 
-            // Progress update (every 5 scenarios) so the UI can show liveness.
-            if (i % 5 === 0 || i === slice.length - 1) {
+              latencies.sort((a, b) => a - b);
+              const pct = (p: number) => latencies.length ? latencies[Math.min(latencies.length - 1, Math.floor(latencies.length * p))] : 0;
+              const n = Math.max(1, scoredCount);
+              const summary = {
+                total: slice.length, passed, failed, flagged,
+                pass_rate: slice.length ? passed / slice.length : 0,
+                p50_ms: pct(0.5), p95_ms: pct(0.95),
+                tokens: totalTokens,
+                axes: {
+                  faithfulness: axisTotals.faithfulness / n,
+                  relevance: axisTotals.relevance / n,
+                  safety: axisTotals.safety / n,
+                  robustness: axisTotals.robustness / n,
+                },
+              };
               await sb.from("eval_runs").update({
-                progress: Math.round(((i + 1) / slice.length) * 100),
+                status: failed === 0 ? "passed" : "failed",
+                finished_at: new Date().toISOString(),
+                progress: 100,
                 flagged_count: flagged,
-                summary: { total: slice.length, passed, failed, flagged },
+                summary,
+              }).eq("id", runRow.id);
+            } catch (err) {
+              console.error("run_plan background error", err);
+              const msg = err instanceof Error ? err.message : String(err);
+              await sb.from("eval_runs").update({
+                status: "failed",
+                finished_at: new Date().toISOString(),
+                summary: { total: slice.length, passed, failed, flagged, error: msg },
               }).eq("id", runRow.id);
             }
-          }
-
-          latencies.sort((a, b) => a - b);
-          const pct = (p: number) => latencies.length ? latencies[Math.min(latencies.length - 1, Math.floor(latencies.length * p))] : 0;
-          const n = Math.max(1, scoredCount);
-          const summary = {
-            total: slice.length, passed, failed, flagged,
-            pass_rate: slice.length ? passed / slice.length : 0,
-            p50_ms: pct(0.5), p95_ms: pct(0.95),
-            tokens: totalTokens,
-            axes: {
-              faithfulness: axisTotals.faithfulness / n,
-              relevance: axisTotals.relevance / n,
-              safety: axisTotals.safety / n,
-              robustness: axisTotals.robustness / n,
-            },
           };
-          await sb.from("eval_runs").update({
-            status: failed === 0 ? "passed" : "failed",
-            finished_at: new Date().toISOString(),
-            progress: 100,
-            flagged_count: flagged,
-            summary,
-          }).eq("id", runRow.id);
-          return json({ run_id: runRow.id, ...summary });
+
+          // @ts-ignore EdgeRuntime is provided by Supabase edge runtime
+          (globalThis as any).EdgeRuntime?.waitUntil ? (globalThis as any).EdgeRuntime.waitUntil(task()) : task();
+          return json({ run_id: runRow.id, status: "running", total: slice.length });
+
         }
 
         case "get_plan_report": {
