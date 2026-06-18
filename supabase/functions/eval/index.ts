@@ -17,13 +17,15 @@ async function safeJson(req: Request): Promise<any> {
 }
 
 // ---------------------------------------------------------------------------
-// Lovable AI Gateway helper — used by `generate_scenarios` and the
-// llm_judge grader. No extra secret needed; LOVABLE_API_KEY is preset.
+// AI helpers
+//  - Lovable AI Gateway: used by `generate_scenarios` (no extra secret).
+//  - OpenRouter: used by the llm_judge grader with gemini-3.1-flash-lite.
 // ---------------------------------------------------------------------------
 const LOVABLE_AI_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
-const DEFAULT_JUDGE_MODEL = "google/gemini-2.5-flash";
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const JUDGE_MODEL = "google/gemini-3.1-flash-lite";
 
-async function callLovableAi(messages: any[], model: string = DEFAULT_JUDGE_MODEL): Promise<string> {
+async function callLovableAi(messages: any[], model = "google/gemini-2.5-flash"): Promise<string> {
   const key = Deno.env.get("LOVABLE_API_KEY");
   if (!key) throw new Error("LOVABLE_API_KEY not configured");
   const res = await fetch(LOVABLE_AI_URL, {
@@ -31,10 +33,25 @@ async function callLovableAi(messages: any[], model: string = DEFAULT_JUDGE_MODE
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
     body: JSON.stringify({ model, messages, temperature: 0.2 }),
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Lovable AI ${res.status}: ${text.slice(0, 200)}`);
-  }
+  if (!res.ok) throw new Error(`Lovable AI ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const data = await res.json();
+  return data?.choices?.[0]?.message?.content ?? "";
+}
+
+async function callOpenRouter(messages: any[], model = JUDGE_MODEL): Promise<string> {
+  const key = Deno.env.get("OPENROUTER_API_KEY");
+  if (!key) throw new Error("OPENROUTER_API_KEY not configured");
+  const res = await fetch(OPENROUTER_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://guard.citerlabs.com",
+      "X-Title": "AnveGuard Eval Judge",
+    },
+    body: JSON.stringify({ model, messages, temperature: 0.1, response_format: { type: "json_object" } }),
+  });
+  if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data = await res.json();
   return data?.choices?.[0]?.message?.content ?? "";
 }
