@@ -12,6 +12,21 @@ import { parseModelsResponse } from "../_shared/models_parsers.ts";
 // In-memory cache for /models responses (per provider+key, 5 min TTL).
 const modelsCache = new Map<string, { models: string[]; exp: number }>();
 
+// Sentinel value that the wizard sends when the user clicks
+// "Use default test key" — we resolve it to a server-side env var per provider.
+const SERVER_DEFAULT_SENTINEL = "__SERVER_DEFAULT__";
+const SERVER_DEFAULT_KEY_ENV: Record<string, string> = {
+  perplexity: "PERPLEXITY_API_KEY",
+};
+function resolveServerDefaultKey(provider: string | undefined, supplied: unknown): string | undefined {
+  if (typeof supplied !== "string") return supplied as undefined;
+  if (supplied !== SERVER_DEFAULT_SENTINEL) return supplied;
+  const envName = provider ? SERVER_DEFAULT_KEY_ENV[provider] : undefined;
+  if (!envName) return "";
+  return Deno.env.get(envName) ?? "";
+}
+
+
 // Built-in intent labels the classifier knows about. The user catalog
 // (`known_intents` table) is unioned with these wherever the dashboard
 // returns a `known_intents` list to the UI.
@@ -175,7 +190,16 @@ Deno.serve(async (req) => {
       case "test_custom_endpoint": {
         // Validate the form values WITHOUT persisting. Pings the resolved /models URL.
         const { base_url, models_url, kind, auth_scheme, auth_header,
-                extra_headers, provider_key } = body;
+                extra_headers } = body;
+        // Allow the wizard to ask for the server-side default key by sending the sentinel.
+        // For custom endpoints we infer provider from the base_url host.
+        let providerHint: string | undefined;
+        try {
+          const host = new URL(String(base_url || "")).hostname.toLowerCase();
+          if (host.includes("perplexity.ai")) providerHint = "perplexity";
+        } catch { /* ignore */ }
+        const provider_key = resolveServerDefaultKey(providerHint, body.provider_key);
+
         if (!base_url) return json({ ok: false, error: "Base URL required" }, 400);
         let resolved;
         try {
@@ -465,7 +489,10 @@ Deno.serve(async (req) => {
       }
 
       case "create_key": {
-        const { name, provider, model, provider_key, custom, endpoint_id, is_admin, spend_limit_usd, token_limit, limit_window } = body;
+        const { name, provider, model, custom, endpoint_id, is_admin, spend_limit_usd, token_limit, limit_window } = body;
+        let { provider_key } = body;
+        provider_key = resolveServerDefaultKey(provider, provider_key);
+
         const def = getProvider(provider);
         if (!name || !def) return json({ error: "Invalid provider" }, 400);
 
