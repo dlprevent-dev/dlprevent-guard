@@ -12,6 +12,21 @@ import { parseModelsResponse } from "../_shared/models_parsers.ts";
 // In-memory cache for /models responses (per provider+key, 5 min TTL).
 const modelsCache = new Map<string, { models: string[]; exp: number }>();
 
+// Sentinel value that the wizard sends when the user clicks
+// "Use default test key" — we resolve it to a server-side env var per provider.
+const SERVER_DEFAULT_SENTINEL = "__SERVER_DEFAULT__";
+const SERVER_DEFAULT_KEY_ENV: Record<string, string> = {
+  perplexity: "PERPLEXITY_API_KEY",
+};
+function resolveServerDefaultKey(provider: string | undefined, supplied: unknown): string | undefined {
+  if (typeof supplied !== "string") return supplied as undefined;
+  if (supplied !== SERVER_DEFAULT_SENTINEL) return supplied;
+  const envName = provider ? SERVER_DEFAULT_KEY_ENV[provider] : undefined;
+  if (!envName) return "";
+  return Deno.env.get(envName) ?? "";
+}
+
+
 // Built-in intent labels the classifier knows about. The user catalog
 // (`known_intents` table) is unioned with these wherever the dashboard
 // returns a `known_intents` list to the UI.
