@@ -190,7 +190,16 @@ Deno.serve(async (req) => {
       case "test_custom_endpoint": {
         // Validate the form values WITHOUT persisting. Pings the resolved /models URL.
         const { base_url, models_url, kind, auth_scheme, auth_header,
-                extra_headers, provider_key } = body;
+                extra_headers } = body;
+        // Allow the wizard to ask for the server-side default key by sending the sentinel.
+        // For custom endpoints we infer provider from the base_url host.
+        let providerHint: string | undefined;
+        try {
+          const host = new URL(String(base_url || "")).hostname.toLowerCase();
+          if (host.includes("perplexity.ai")) providerHint = "perplexity";
+        } catch { /* ignore */ }
+        const provider_key = resolveServerDefaultKey(providerHint, body.provider_key);
+
         if (!base_url) return json({ ok: false, error: "Base URL required" }, 400);
         let resolved;
         try {
