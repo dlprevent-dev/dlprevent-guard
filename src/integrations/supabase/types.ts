@@ -127,6 +127,7 @@ export type Database = {
         Row: {
           compression_mode: string
           created_at: string
+          current_token_spend: number
           custom_auth_header: string | null
           custom_auth_scheme: string | null
           custom_base_url: string | null
@@ -145,15 +146,19 @@ export type Database = {
           key_hash: string
           key_prefix: string
           last_used_at: string | null
+          limit_reset_at: string | null
+          limit_window: string
           model_default: string
           name: string
           provider: string
           provider_key_encrypted: string | null
+          token_limit: number | null
           user_id: string
         }
         Insert: {
           compression_mode?: string
           created_at?: string
+          current_token_spend?: number
           custom_auth_header?: string | null
           custom_auth_scheme?: string | null
           custom_base_url?: string | null
@@ -172,15 +177,19 @@ export type Database = {
           key_hash: string
           key_prefix: string
           last_used_at?: string | null
+          limit_reset_at?: string | null
+          limit_window?: string
           model_default?: string
           name: string
           provider: string
           provider_key_encrypted?: string | null
+          token_limit?: number | null
           user_id: string
         }
         Update: {
           compression_mode?: string
           created_at?: string
+          current_token_spend?: number
           custom_auth_header?: string | null
           custom_auth_scheme?: string | null
           custom_base_url?: string | null
@@ -199,10 +208,13 @@ export type Database = {
           key_hash?: string
           key_prefix?: string
           last_used_at?: string | null
+          limit_reset_at?: string | null
+          limit_window?: string
           model_default?: string
           name?: string
           provider?: string
           provider_key_encrypted?: string | null
+          token_limit?: number | null
           user_id?: string
         }
         Relationships: [
