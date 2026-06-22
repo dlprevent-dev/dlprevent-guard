@@ -127,6 +127,7 @@ export type Database = {
         Row: {
           compression_mode: string
           created_at: string
+          current_spend_usd: number
           current_token_spend: number
           custom_auth_header: string | null
           custom_auth_scheme: string | null
@@ -152,12 +153,14 @@ export type Database = {
           name: string
           provider: string
           provider_key_encrypted: string | null
+          spend_limit_usd: number | null
           token_limit: number | null
           user_id: string
         }
         Insert: {
           compression_mode?: string
           created_at?: string
+          current_spend_usd?: number
           current_token_spend?: number
           custom_auth_header?: string | null
           custom_auth_scheme?: string | null
@@ -183,12 +186,14 @@ export type Database = {
           name: string
           provider: string
           provider_key_encrypted?: string | null
+          spend_limit_usd?: number | null
           token_limit?: number | null
           user_id: string
         }
         Update: {
           compression_mode?: string
           created_at?: string
+          current_spend_usd?: number
           current_token_spend?: number
           custom_auth_header?: string | null
           custom_auth_scheme?: string | null
@@ -214,6 +219,7 @@ export type Database = {
           name?: string
           provider?: string
           provider_key_encrypted?: string | null
+          spend_limit_usd?: number | null
           token_limit?: number | null
           user_id?: string
         }
