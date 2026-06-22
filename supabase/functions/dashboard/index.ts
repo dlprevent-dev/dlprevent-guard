@@ -1448,17 +1448,18 @@ Deno.serve(async (req) => {
             let payload: any;
             if (fmt === "anthropic_messages") {
               payload = {
-                model: probeModel, max_tokens: 8,
+                model: probeModel, max_tokens: 16,
                 messages: [{ role: "user", content: "ping" }],
               };
             } else if (fmt === "responses") {
-              payload = { model: probeModel, input: "ping", max_output_tokens: 8 };
+              payload = { model: probeModel, input: "ping", max_output_tokens: 16 };
             } else {
               payload = {
-                model: probeModel, max_tokens: 8,
+                model: probeModel, max_tokens: 16,
                 messages: [{ role: "user", content: "ping" }],
               };
             }
+
             const tc = Date.now();
             try {
               const cr = await fetch(chatUrl, {
