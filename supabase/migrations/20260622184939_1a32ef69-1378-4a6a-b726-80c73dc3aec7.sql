@@ -1,0 +1,3 @@
+ALTER TABLE public.api_keys
+  ADD COLUMN IF NOT EXISTS spend_limit_usd NUMERIC,
+  ADD COLUMN IF NOT EXISTS current_spend_usd NUMERIC NOT NULL DEFAULT 0;
