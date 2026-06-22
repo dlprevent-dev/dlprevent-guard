@@ -948,16 +948,35 @@ const Connect = () => {
 
             {tile.needsKey ? (
               <div className="space-y-2">
-                <Label>{tile.label} API key</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label>{tile.label} API key</Label>
+                  {tile.id === "perplexity" && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => {
+                        setProviderKey("__SERVER_DEFAULT__");
+                        setTestResult({ ok: true, msg: "Using server-stored Perplexity test key" });
+                        toast.success("Using default Perplexity test key");
+                      }}
+                    >
+                      <Sparkles className="mr-1 h-3 w-3" /> Use default test key
+                    </Button>
+                  )}
+                </div>
                 <Input
                   type="password"
-                  value={providerKey}
+                  value={providerKey === "__SERVER_DEFAULT__" ? "" : providerKey}
                   onChange={(e) => setProviderKey(e.target.value)}
-                  placeholder={tile.keyHint || "Paste your key"}
+                  placeholder={providerKey === "__SERVER_DEFAULT__" ? "•••• using server default ••••" : (tile.keyHint || "Paste your key")}
                   autoComplete="off"
                 />
                 <p className="text-meta text-muted-foreground">
-                  Stored AES-GCM encrypted. Never returned over the API after this step.
+                  {providerKey === "__SERVER_DEFAULT__"
+                    ? "Using the server-stored test key — no need to paste your own."
+                    : "Stored AES-GCM encrypted. Never returned over the API after this step."}
                 </p>
               </div>
             ) : (
@@ -967,6 +986,7 @@ const Connect = () => {
                   : "No upstream key needed for local Ollama. The proxy must be able to reach the host."}
               </div>
             )}
+
 
             <div className="space-y-2">
               <Label>Default model</Label>
