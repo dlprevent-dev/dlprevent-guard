@@ -228,9 +228,19 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
     const layers = [...r.layers, ...evaluateAgentActions(p.text)];
     return { verdict: layers.length ? aggregate(layers, settings) : r.verdict, layers };
   }
-  const r = await evaluate({ ...base, text: p.text, direction: "input" }, { model: ctx.model });
+  // A tool result is data, not a prompt. Upstream's heuristics look for
+  // what a *person* hides in a prompt — encoded payloads, gibberish
+  // suffixes, many-shot patterns — and a git log, a hash or a base64 blob
+  // in a file is all of that by nature: on the first real Hermes session
+  // every other tool result came back as `adversarial_suffix`. So for data:
+  // no heuristics and no multi-turn analysis; the injection guard, the PII
+  // check, the threat feed and upstream's scanner for retrieved content
+  // stay.
+  const tool = p.direction === "tool_result";
+  const s = tool ? { ...settings, enable_heuristics: false, enable_behavioral: false } : settings;
+  const r = await evaluate({ ...base, settings: s, text: p.text, direction: "input" }, { model: ctx.model });
   const layers = [...r.layers];
-  if (p.direction === "tool_result") {
+  if (tool) {
     layers.push(...evaluateRetrieved(p.text, { kind: "mcp_tool_result", origin: p.origin, consumer: "tool_router" }));
   }
   return { verdict: layers.length ? aggregate(layers, settings) : r.verdict, layers };
