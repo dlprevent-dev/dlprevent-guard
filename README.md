@@ -66,6 +66,10 @@ one layer; the host-side DLPrevent agent is the other.
   the image is built.
 - **Flag mode by default**: forward everything, report findings. Block mode
   answers a refused request with a 403 in the API shape the agent expects.
+  The agent keeps the refused content in its history and sends it again with
+  the next turn; from then on the guard replaces it with a short note
+  (*withheld by dlprevent-guard*) and forwards the rest, so the conversation
+  goes on without it. The guard log says `withheld, refused before`.
 
 ## What it scans
 
@@ -170,7 +174,7 @@ All in `guard/.env`, read when the container starts.
 | `GUARD_UPSTREAM_KEY` | — | The default provider's key, set on every forwarded request. Unset: the agent's key passes through. |
 | `GUARD_UPSTREAMS` | — | More providers, `name=url,name=url`, each under `/<name>/…`. At least one of this and `GUARD_UPSTREAM` is needed. |
 | `GUARD_KEY_<NAME>` | — | The key for route `<name>` (upper case, `-` as `_`). |
-| `GUARD_MODE` | `flag` | `flag`: forward everything, report findings. `block`: refuse a request whose verdict is `block` with a 403. A streamed answer is always forwarded and reported afterwards. |
+| `GUARD_MODE` | `flag` | `flag`: forward everything, report findings. `block`: refuse a request whose verdict is `block` with a 403, and withhold that content when it comes again. A streamed answer is always forwarded and reported afterwards. |
 | `GUARD_POLICY` | — | Path to a JSON file overriding engine settings (`PolicySettings` in [`policy_engine.ts`](supabase/functions/_shared/policy_engine.ts)), mounted into the container; e.g. `{"pii_action": "sanitize"}` masks personal data and secrets before they reach the provider. |
 | `GUARD_PORT` | `8787` | Host port, bound to `127.0.0.1` only. |
 
@@ -213,7 +217,7 @@ dashboard shows.
 
 ```bash
 cd guard
-deno task test          # 19 tests: extraction, agent rules, routes, end to end against fake providers
+deno task test          # 20 tests: extraction, agent rules, routes, end to end against fake providers
 ```
 
 The engine's own tests: `cd supabase/functions/_shared && deno test --allow-net --allow-read --allow-env --no-check`.
