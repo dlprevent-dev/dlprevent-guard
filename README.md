@@ -135,8 +135,30 @@ as the default for `/v1/…`, so an agent already pointed at the guard keeps
 working. A finding names its route (`"upstream":"openrouter"`); the startup
 log lists every route and whether the guard carries its key.
 
-The complete setup with Hermes and DLPrevent, including hardening the agent
-itself: [DLPrevent → docs/HERMES.md](https://github.com/dlprevent-dev/dlprevent/blob/main/docs/HERMES.md).
+### What Hermes needs
+
+The guard only sees what Hermes sends it. Every path to a model that does
+not name the guard goes around it, unscanned. In `~/.hermes` (as root:
+`/root/.hermes`), then `systemctl restart hermes-gateway`:
+
+| Where | Setting | Why |
+|---|---|---|
+| `config.yaml`, the provider of `model:` (or its `custom_providers:` entry) | `base_url: http://127.0.0.1:8787/v1` — or `/<name>/v1` with `GUARD_UPSTREAMS`; `key_env` stays | the main model through the guard |
+| `config.yaml`, `delegation:` and every `auxiliary:` task with its own provider | `base_url: http://127.0.0.1:8787/<name>/v1`, `api_key: via-dlprevent-guard` | subagents and helper tasks, often OpenRouter; tasks with `provider: auto` follow the main model |
+| `config.yaml`, aliases | the plain model name, `ds: deepseek-v4-pro` | `deepseek:deepseek-v4-pro` means Hermes's built-in provider, which goes around the guard |
+| `config.yaml`, `fallback_providers` | empty | a fallback is a way around |
+| `.env` | every provider key (`DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, …) replaced by `via-dlprevent-guard`, after it went into the guard's `.env` | Hermes sends `no-key-required` to `127.0.0.1` anyway; without a real key, every way around the guard ends in a 401 |
+| credential pool | `hermes auth list`; `hermes auth remove <provider> <id>` for every `manual` entry that is a real key | Hermes falls back to it when the `.env` key fails |
+| the service | one gateway, run with `HERMES_HOME` pointing at this configuration (`pgrep -af 'hermes_cli.main gateway'` shows exactly one) | a second gateway, or one started with an empty `HERMES_HOME`, answers with the old settings |
+| existing chats | `/new`; switch models with the plain name, `/model deepseek-v4-pro` | a session keeps the provider it started with |
+
+It works when every Hermes session in `state.db` shows
+`billing_base_url` `http://127.0.0.1:8787/…` and the guard log has a `POST`
+on every route while Hermes is used — a subagent task exercises
+`delegation`.
+
+Step by step, with the commands, the host-side DLPrevent agent and
+hardening Hermes itself: [DLPrevent → docs/HERMES.md](https://github.com/dlprevent-dev/dlprevent/blob/main/docs/HERMES.md).
 
 ## Configuration
 
