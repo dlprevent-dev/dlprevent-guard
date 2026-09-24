@@ -74,12 +74,19 @@ user's turn and the tool results — so a finding is reported once, not on
 every later turn. Then the model's answer, including the tool calls it asks
 for, streamed or not.
 
-| Direction | Checked for | By |
-|---|---|---|
-| user's message | prompt injection, jailbreak patterns and heuristics, personal data and secrets, known attack signatures | AnveGuard engine |
-| tool result | instructions hidden in data (override phrases, imperatives aimed at the model, hidden HTML, poisoned-authority claims), injection, personal data and secrets, known signatures | AnveGuard engine — without its prompt heuristics, which mistake hashes, base64 and code for attacks |
-| model's answer | secrets and personal data, links to private addresses, markdown-image exfiltration | AnveGuard engine + [`guard/agent_rules.ts`](guard/agent_rules.ts) |
-| tool calls in the answer | data-drop services, credential files, file uploads, reverse shells, piping into a shell — in what the model is about to *run*, not in what it says: a model that warns you about an attack names it too | [`guard/agent_rules.ts`](guard/agent_rules.ts) |
+| Direction | Refused in block mode | Only reported | By |
+|---|---|---|---|
+| user's message | prompt injection and jailbreak patterns; smuggled text (homoglyphs, bidi characters, adversarial suffixes, many-shot jailbreaks); a secret in key shape — an API key pasted into the chat | personal data, multi-turn patterns (role-play escalation, priming), known attack signatures | AnveGuard engine |
+| tool result | instructions hidden in data: override phrases, hidden HTML and HTML comments, invisible tag characters, references to other tools, markdown-image exfiltration; dangerous Python, SQL writes; imperatives aimed at the model and poisoned-authority claims when they address a tool | the same imperatives and claims otherwise, personal data and secrets, known signatures | AnveGuard engine — without its prompt heuristics, which mistake hashes, base64 and code for attacks |
+| model's answer | a secret in key shape, links to private or loopback addresses, image links that carry data | personal data | AnveGuard engine + [`guard/agent_rules.ts`](guard/agent_rules.ts) |
+| tool calls in the answer | data-drop services, credential files, reverse shells | file uploads to another host (`curl -T`, `curl -d @…`, `scp`, `rsync`), piping into a shell | [`guard/agent_rules.ts`](guard/agent_rules.ts) — in what the model is about to *run*, not in what it says: a model that warns you about an attack names it too |
+
+The last two rows are refused only if the answer is **not streamed**: a
+streamed answer reaches the agent as it arrives and is scanned when it has
+ended. Whether your agent streams decides whether block mode can stop a
+command at all; [DLPrevent → docs/HERMES.md](https://github.com/dlprevent-dev/dlprevent/blob/main/docs/HERMES.md#check-it-works)
+has a harmless test. A policy file (`GUARD_POLICY`) moves findings between
+the two columns: `"pii_action": "block"`, `"injection_action": "flag"`.
 
 Supported APIs: OpenAI chat completions (`/v1/chat/completions`) and
 Anthropic messages (`/v1/messages`). Everything else passes through
