@@ -2,10 +2,10 @@
 // between an AI agent (Hermes) and its model provider.
 //
 // What is kept from upstream: the engine in supabase/functions/_shared,
-// untouched, so rule updates merge. What is not: Supabase, Clerk, the
-// Lovable classifier, the dashboard, the request log. This proxy stores
-// nothing but verdicts, and a verdict carries rule names and reasons —
-// never the prompt, the answer or the matched text.
+// untouched, so rule updates can be taken over as they are. What is not:
+// Supabase, Clerk, the Lovable classifier, the dashboard, the request log.
+// This proxy stores nothing but verdicts, and a verdict carries rule names
+// and reasons — never the prompt, the answer or the matched text.
 //
 // Flow per request:
 //   1. What is new since the model last spoke — the user's turn and the

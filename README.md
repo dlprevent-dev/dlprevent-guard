@@ -189,13 +189,15 @@ deno task test          # 19 tests: extraction, agent rules, routes, end to end 
 
 The engine's own tests: `cd supabase/functions/_shared && deno test --allow-net --allow-read --allow-env --no-check`.
 
-Only AnveGuard's engine is kept here; its dashboard, edge functions and the
-rest are left out. Engine updates come from upstream by path:
+Only AnveGuard's engine is kept here — `policy_engine.ts`, `anveguard.ts`,
+`threat_intel.json` and the engine's tests; the rest of upstream is left out.
+Engine updates come from upstream file by file:
 
 ```bash
 git remote add upstream https://github.com/ANVE-AI/prompt-sentinel-flow.git   # once
 git remote set-url --push upstream no-push-to-anveguard                        # once
-git fetch upstream && git checkout upstream/main -- supabase/functions/_shared
+git fetch upstream
+git checkout upstream/main -- $(git ls-files supabase/functions/_shared)
 ```
 
 Then run both test suites before committing. CI (`.github/workflows/guard.yml`)

@@ -15,8 +15,8 @@
 // prose is the image link, because a chat client fetches it by itself. A user
 // asking for the same thing is caught when the model turns it into a call.
 //
-// Kept apart from supabase/functions/_shared so upstream's engine merges
-// without conflicts. Same verdict shape, so upstream's aggregator decides.
+// Kept apart from supabase/functions/_shared so upstream's engine can be
+// taken over as it is. Same verdict shape, so upstream's aggregator decides.
 
 import type { LayerVerdict } from "../supabase/functions/_shared/policy_engine.ts";
 
