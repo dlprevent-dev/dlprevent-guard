@@ -398,5 +398,15 @@ if (import.meta.main) {
   };
   const port = Number(Deno.env.get("GUARD_PORT") ?? "8787");
   console.log(`dlprevent-guard on :${port} -> ${upstream}, mode ${mode}, log ${cfg.log}`);
-  Deno.serve({ port, hostname: "0.0.0.0" }, handler(cfg, write));
+  const handle = handler(cfg, write);
+  // One line per request: whether the agent goes through the guard at all
+  // is the first thing anyone asks, and findings alone cannot answer it.
+  // Method, path, status and time — no body, no header.
+  Deno.serve({ port, hostname: "0.0.0.0" }, async (req) => {
+    const t = performance.now();
+    const resp = await handle(req);
+    const path = new URL(req.url).pathname;
+    if (path !== "/healthz") console.log(`${req.method} ${path} -> ${resp.status} ${Math.round(performance.now() - t)}ms`);
+    return resp;
+  });
 }
