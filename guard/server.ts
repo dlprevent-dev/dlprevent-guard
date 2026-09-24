@@ -42,6 +42,8 @@ export interface Piece {
   text: string;
   /** Tool name for a tool result. */
   origin?: string;
+  /** For an answer: the arguments of its tool calls, what it will run. */
+  calls?: string;
 }
 
 /** One line of the verdict log. Metadata only. */
@@ -50,6 +52,8 @@ export interface Record {
   direction: Direction;
   verdict: Verdict;
   action: "forwarded" | "blocked";
+  /** The route the request took (`GUARD_UPSTREAMS`); absent for the default. */
+  upstream?: string;
   model?: string;
   origin?: string;
   chars: number;
@@ -134,26 +138,28 @@ export function newPieces(body: Json): Piece[] {
 /** The model's answer as text, and the tools it asks for — from a complete
  *  (non-streamed) OpenAI or Anthropic response. Tool arguments count as
  *  text: they are where an exfiltration URL or a shell command sits. */
-export function answerOf(resp: Json): { text: string; tools: string[] } {
-  const parts: string[] = [];
+export function answerOf(resp: Json): { text: string; calls: string; tools: string[] } {
+  const prose: string[] = [];
+  const calls: string[] = [];
   const tools: string[] = [];
   const msg = (resp.choices as Json[] | undefined)?.[0]?.message as Json | undefined;
   if (msg) {
-    parts.push(textOf(msg.content));
+    prose.push(textOf(msg.content));
     for (const tc of (msg.tool_calls as Json[] | undefined) ?? []) {
       const f = tc.function as Json | undefined;
       if (str(f?.name)) tools.push(str(f?.name)!);
-      if (str(f?.arguments)) parts.push(str(f?.arguments)!);
+      if (str(f?.arguments)) calls.push(str(f?.arguments)!);
     }
   }
   for (const block of (Array.isArray(resp.content) ? resp.content : []) as Json[]) {
-    if (block.type === "text" && str(block.text)) parts.push(str(block.text)!);
+    if (block.type === "text" && str(block.text)) prose.push(str(block.text)!);
     if (block.type === "tool_use") {
       if (str(block.name)) tools.push(str(block.name)!);
-      parts.push(JSON.stringify(block.input ?? {}));
+      calls.push(JSON.stringify(block.input ?? {}));
     }
   }
-  return { text: parts.filter((p) => p.length > 0).join("\n"), tools };
+  const join = (a: string[]) => a.filter((p) => p.length > 0).join("\n");
+  return { text: join([...prose, ...calls]), calls: join(calls), tools };
 }
 
 /**
@@ -163,6 +169,7 @@ export function answerOf(resp: Json): { text: string; tools: string[] } {
 export class StreamCollector {
   private rest = "";
   private parts: string[] = [];
+  private callParts: string[] = [];
   tools: string[] = [];
 
   push(chunk: string) {
@@ -187,22 +194,32 @@ export class StreamCollector {
       for (const tc of (delta.tool_calls as Json[] | undefined) ?? []) {
         const f = tc.function as Json | undefined;
         if (str(f?.name)) this.tools.push(str(f?.name)!);
-        if (str(f?.arguments)) this.parts.push(str(f?.arguments)!);
+        if (str(f?.arguments)) this.call(str(f?.arguments)!);
       }
     }
     const d = ev.delta as Json | undefined;
     if (ev.type === "content_block_delta" && d) {
       if (str(d.text)) this.parts.push(str(d.text)!);
-      if (str(d.partial_json)) this.parts.push(str(d.partial_json)!);
+      if (str(d.partial_json)) this.call(str(d.partial_json)!);
     }
     const block = ev.content_block as Json | undefined;
     if (ev.type === "content_block_start" && block?.type === "tool_use" && str(block.name)) this.tools.push(str(block.name)!);
+  }
+
+  private call(s: string) {
+    this.parts.push(s);
+    this.callParts.push(s);
   }
 
   text(): string {
     if (this.rest) this.line(this.rest.trim());
     this.rest = "";
     return this.parts.join("");
+  }
+
+  /** The tool-call arguments alone. Call after `text()`. */
+  calls(): string {
+    return this.callParts.join("");
   }
 }
 
@@ -225,7 +242,7 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
   if (p.direction === "output") {
     const r = await evaluate({ ...base, text: p.text, direction: "output" }, { model: ctx.model, responseToolNames: ctx.tools });
     // What the agent is about to do: upstream judges text, not commands.
-    const layers = [...r.layers, ...evaluateAgentActions(p.text)];
+    const layers = [...r.layers, ...evaluateAgentActions(p.text, p.calls ?? "")];
     return { verdict: layers.length ? aggregate(layers, settings) : r.verdict, layers };
   }
   // A tool result is data, not a prompt. Upstream's heuristics look for
@@ -263,12 +280,13 @@ const LEAD: { [layer: string]: number } = {
   behavioral: 6,
 };
 
-export function record(p: Piece, verdict: Verdict, layers: LayerVerdict[], blocked: boolean, model?: string): Record {
+export function record(p: Piece, verdict: Verdict, layers: LayerVerdict[], blocked: boolean, model?: string, upstream?: string): Record {
   return {
     at: new Date().toISOString(),
     direction: p.direction,
     verdict,
     action: blocked ? "blocked" : "forwarded",
+    upstream,
     model,
     origin: p.origin,
     chars: p.text.length,
@@ -282,16 +300,66 @@ export function record(p: Piece, verdict: Verdict, layers: LayerVerdict[], block
 
 // ---------- the proxy -----------------------------------------------------
 
-export interface Config {
-  upstream: string;
-  mode: Mode;
-  log: string;
-  settings: PolicySettings;
+/** One model provider the guard forwards to. */
+export interface Upstream {
+  /** Base URL without `/v1`: the agent's path is appended to it. */
+  url: string;
   /** The provider key, if the guard is to set it. An agent that takes a
    *  127.0.0.1 address for a local model server sends a placeholder
    *  instead of its key (Hermes: `no-key-required`); then the guard has to
-   *  carry the key itself. Unset: the agent's key passes through. */
+   *  carry the key itself — and once it does, the agent no longer needs
+   *  one, so it cannot go around the guard with it either. Unset: the
+   *  agent's key passes through. */
   key?: string;
+}
+
+export interface Config {
+  /** Providers by name, reached under `/<name>/…` (`GUARD_UPSTREAMS`). One
+   *  guard for every provider an agent uses: its subagents and helper tasks
+   *  often talk to a different one than its main model, and whatever does
+   *  not come through here is not scanned. */
+  routes: { [name: string]: Upstream };
+  /** For a path without a known route name (`GUARD_UPSTREAM`): the setup
+   *  from before there were routes, `/v1/…` straight to one provider. */
+  fallback?: Upstream;
+  mode: Mode;
+  log: string;
+  settings: PolicySettings;
+}
+
+/** Names that would shadow a path of the APIs themselves. */
+const RESERVED = ["v1", "api", "healthz", "props", "version", "chat", "messages", "models"];
+
+/**
+ * `GUARD_UPSTREAMS=deepseek=https://api.deepseek.com,openrouter=https://openrouter.ai/api`,
+ * each key in `GUARD_KEY_<NAME>` (upper case, `-` as `_`). Throws on a line
+ * that cannot be meant: a typo here would send a provider's traffic to the
+ * wrong place, and the guard should refuse to start rather than guess.
+ */
+export function parseUpstreams(line: string | undefined, env: { [k: string]: string | undefined }): { [name: string]: Upstream } {
+  const out: { [name: string]: Upstream } = {};
+  for (const item of (line ?? "").split(",").map((s) => s.trim()).filter((s) => s.length > 0)) {
+    const eq = item.indexOf("=");
+    const name = eq > 0 ? item.slice(0, eq).trim() : "";
+    const url = item.slice(eq + 1).trim().replace(/\/+$/, "");
+    if (!/^[a-z0-9][a-z0-9_-]*$/i.test(name) || RESERVED.includes(name.toLowerCase())) {
+      throw new Error(`GUARD_UPSTREAMS: "${name}" is not a usable route name (letters, digits, - and _; not ${RESERVED.join(", ")})`);
+    }
+    if (!/^https?:\/\/[^/]/.test(url)) throw new Error(`GUARD_UPSTREAMS: "${url}" for ${name} is not an http(s) URL`);
+    const key = env[`GUARD_KEY_${name.toUpperCase().replace(/-/g, "_")}`];
+    out[name] = key ? { url, key } : { url };
+  }
+  return out;
+}
+
+/** Where a request goes: the route its first path segment names, with that
+ *  segment taken off, or the default provider with the path as it came. */
+export function route(cfg: Config, pathname: string): { name?: string; url: string; key?: string; path: string } | undefined {
+  const m = pathname.match(/^\/([^/]+)(\/.*)?$/);
+  const r = m ? cfg.routes[m[1]] : undefined;
+  if (m && r) return { name: m[1], url: r.url, key: r.key, path: m[2] ?? "/" };
+  if (cfg.fallback) return { name: undefined, url: cfg.fallback.url, key: cfg.fallback.key, path: pathname };
+  return undefined;
 }
 
 /** Paths whose bodies are scanned. Everything else passes through as is. */
@@ -301,17 +369,22 @@ export function handler(cfg: Config, write: (r: Record) => Promise<void>) {
   return async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     if (url.pathname === "/healthz") return new Response("ok\n");
-    const target = cfg.upstream.replace(/\/$/, "") + url.pathname + url.search;
+    const to = route(cfg, url.pathname);
+    if (!to) {
+      const names = Object.keys(cfg.routes).map((n) => `/${n}/`).join(", ");
+      return Response.json({ error: { message: `dlprevent-guard: no provider for ${url.pathname} — use one of ${names}`, type: "guard_no_route" } }, { status: 404 });
+    }
+    const target = to.url + to.path + url.search;
     const headers = new Headers(req.headers);
     headers.delete("host");
     headers.delete("content-length");
-    const anthropic = url.pathname.endsWith("/messages");
-    if (cfg.key) {
-      headers.set("authorization", `Bearer ${cfg.key}`);
-      if (anthropic) headers.set("x-api-key", cfg.key);
+    const anthropic = to.path.endsWith("/messages");
+    if (to.key) {
+      headers.set("authorization", `Bearer ${to.key}`);
+      if (anthropic) headers.set("x-api-key", to.key);
     }
 
-    if (req.method !== "POST" || !SCANNED.includes(url.pathname)) {
+    if (req.method !== "POST" || !SCANNED.includes(to.path)) {
       return relay(await fetch(target, { method: req.method, headers, body: req.body }));
     }
 
@@ -331,7 +404,7 @@ export function handler(cfg: Config, write: (r: Record) => Promise<void>) {
         const { verdict, layers } = await scan(p, cfg.settings, { model });
         if (verdict === "allow") continue;
         const block = cfg.mode === "block" && verdict === "block";
-        const rec = record(p, verdict, layers, block, model);
+        const rec = record(p, verdict, layers, block, model, to.name);
         await write(rec);
         if (block && !blockedBy) blockedBy = rec;
       }
@@ -347,7 +420,7 @@ export function handler(cfg: Config, write: (r: Record) => Promise<void>) {
     if (type.includes("text/event-stream")) {
       // Stream to the agent at once; scan the copy when it has ended.
       const [toAgent, toScan] = resp.body.tee();
-      scanStream(toScan, cfg, model, write);
+      scanStream(toScan, cfg, model, to.name, write);
       return relay(resp, toAgent);
     }
 
@@ -355,11 +428,11 @@ export function handler(cfg: Config, write: (r: Record) => Promise<void>) {
     try {
       const answer = answerOf(JSON.parse(text));
       if (answer.text) {
-        const p: Piece = { direction: "output", text: answer.text };
+        const p: Piece = { direction: "output", text: answer.text, calls: answer.calls };
         const { verdict, layers } = await scan(p, cfg.settings, { model, tools: answer.tools });
         if (verdict !== "allow") {
           const block = cfg.mode === "block" && verdict === "block";
-          const rec = record(p, verdict, layers, block, model);
+          const rec = record(p, verdict, layers, block, model, to.name);
           await write(rec);
           if (block) return refusal(rec, anthropic);
         }
@@ -371,16 +444,16 @@ export function handler(cfg: Config, write: (r: Record) => Promise<void>) {
   };
 }
 
-async function scanStream(stream: ReadableStream<Uint8Array>, cfg: Config, model: string | undefined, write: (r: Record) => Promise<void>) {
+async function scanStream(stream: ReadableStream<Uint8Array>, cfg: Config, model: string | undefined, upstream: string | undefined, write: (r: Record) => Promise<void>) {
   try {
     const c = new StreamCollector();
     const dec = new TextDecoder();
     for await (const chunk of stream) c.push(dec.decode(chunk, { stream: true }));
     const text = c.text();
     if (!text) return;
-    const p: Piece = { direction: "output", text };
+    const p: Piece = { direction: "output", text, calls: c.calls() };
     const { verdict, layers } = await scan(p, cfg.settings, { model, tools: c.tools });
-    if (verdict !== "allow") await write(record(p, verdict, layers, false, model));
+    if (verdict !== "allow") await write(record(p, verdict, layers, false, model, upstream));
   } catch (e) {
     console.error("guard: stream scan failed:", e instanceof Error ? e.message : e);
   }
@@ -413,9 +486,17 @@ async function loadSettings(path: string | undefined): Promise<PolicySettings> {
 }
 
 if (import.meta.main) {
-  const upstream = Deno.env.get("GUARD_UPSTREAM");
-  if (!upstream) {
-    console.error("GUARD_UPSTREAM is not set: the model provider's base URL, e.g. https://api.openai.com or https://openrouter.ai/api");
+  let routes: { [name: string]: Upstream };
+  try {
+    routes = parseUpstreams(Deno.env.get("GUARD_UPSTREAMS"), Deno.env.toObject());
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : e);
+    Deno.exit(1);
+  }
+  const single = Deno.env.get("GUARD_UPSTREAM")?.replace(/\/+$/, "");
+  const fallback: Upstream | undefined = single ? { url: single, key: Deno.env.get("GUARD_UPSTREAM_KEY") || undefined } : undefined;
+  if (!fallback && Object.keys(routes).length === 0) {
+    console.error("no provider: set GUARD_UPSTREAM (one provider, e.g. https://api.deepseek.com) or GUARD_UPSTREAMS (name=url,…)");
     Deno.exit(1);
   }
   const mode = (Deno.env.get("GUARD_MODE") ?? "flag") as Mode;
@@ -424,18 +505,21 @@ if (import.meta.main) {
     Deno.exit(1);
   }
   const cfg: Config = {
-    upstream,
+    routes,
+    fallback,
     mode,
     log: Deno.env.get("GUARD_LOG") ?? "/var/log/dlprevent-guard/verdicts.jsonl",
     settings: await loadSettings(Deno.env.get("GUARD_POLICY")),
-    key: Deno.env.get("GUARD_UPSTREAM_KEY") || undefined,
   };
   const write = async (r: Record) => {
     console.log(`guard: ${r.direction} ${r.verdict} ${r.action} ${r.layers.map((l) => l.rule ?? l.layer).join(",")}`);
     await Deno.writeTextFile(cfg.log, JSON.stringify(r) + "\n", { append: true, create: true });
   };
   const port = Number(Deno.env.get("GUARD_PORT") ?? "8787");
-  console.log(`dlprevent-guard on :${port} -> ${upstream}, mode ${mode}, log ${cfg.log}, key ${cfg.key ? "set by the guard" : "from the agent"}`);
+  const keyOf = (u: Upstream) => (u.key ? "key set by the guard" : "key from the agent");
+  console.log(`dlprevent-guard on :${port}, mode ${mode}, log ${cfg.log}`);
+  if (fallback) console.log(`  /v1/…  -> ${fallback.url}, ${keyOf(fallback)}`);
+  for (const [n, u] of Object.entries(routes)) console.log(`  /${n}/…  -> ${u.url}, ${keyOf(u)}`);
   const handle = handler(cfg, write);
   // One line per request: whether the agent goes through the guard at all
   // is the first thing anyone asks, and findings alone cannot answer it.

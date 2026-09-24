@@ -1,11 +1,13 @@
 # dlprevent-guard next to Hermes, in one file. On the Hermes host:
 #
 #   git clone <this repo> && cd dlprevent-guard/guard
-#   echo GUARD_UPSTREAM=https://openrouter.ai/api > .env    # your provider
+#   echo GUARD_UPSTREAM=https://api.deepseek.com > .env     # or GUARD_UPSTREAMS, see README
 #   docker compose up -d --build
 #
-# Then point Hermes at http://127.0.0.1:8787/v1 instead of the provider;
-# its API key stays in Hermes and passes through. Verdicts land in
+# Then point the agent at http://127.0.0.1:8787/v1 (one provider) or
+# http://127.0.0.1:8787/<name>/v1 (GUARD_UPSTREAMS) instead of the provider,
+# and give the keys to the guard (GUARD_UPSTREAM_KEY, GUARD_KEY_<NAME>) so the
+# agent needs none of its own. Verdicts land in
 # /var/log/dlprevent-guard/verdicts.jsonl, where the DLPrevent Linux agent
 # (installed on the host, not in here — it watches the host kernel) picks
 # them up as alerts.
@@ -16,16 +18,10 @@ services:
       dockerfile: guard/Dockerfile
     image: dlprevent-guard:local
     restart: unless-stopped
-    environment:
-      GUARD_UPSTREAM: ${GUARD_UPSTREAM:?set GUARD_UPSTREAM to the model provider's base URL, e.g. https://openrouter.ai/api}
-      # flag: report and forward. block: refuse what the rules call block.
-      GUARD_MODE: ${GUARD_MODE:-flag}
-      # The provider key, if the agent does not send it: Hermes treats a
-      # 127.0.0.1 address as a local model server and sends the placeholder
-      # "no-key-required". Keep .env readable by root only (chmod 600).
-      GUARD_UPSTREAM_KEY: ${GUARD_UPSTREAM_KEY:-}
-      # Optional: overrides of the engine settings, as JSON (see README).
-      # GUARD_POLICY: /etc/dlprevent-guard/policy.json
+    # Everything from .env goes in: GUARD_UPSTREAM(S), GUARD_KEY_<NAME>,
+    # GUARD_MODE, GUARD_POLICY — the key names depend on your route names,
+    # so they cannot be listed here. See the README.
+    env_file: .env
     ports:
       # This host only: Hermes talks to it, nobody else should.
       - "127.0.0.1:${GUARD_PORT:-8787}:8787"

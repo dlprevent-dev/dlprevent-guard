@@ -78,7 +78,8 @@ for, streamed or not.
 |---|---|---|
 | user's message | prompt injection, jailbreak patterns and heuristics, personal data and secrets, known attack signatures | AnveGuard engine |
 | tool result | instructions hidden in data (override phrases, imperatives aimed at the model, hidden HTML, poisoned-authority claims), injection, personal data and secrets, known signatures | AnveGuard engine — without its prompt heuristics, which mistake hashes, base64 and code for attacks |
-| model's answer | secrets and personal data, links to private addresses, markdown-image exfiltration, data-drop services, credential files, file uploads, reverse shells, piping into a shell | AnveGuard engine + [`guard/agent_rules.ts`](guard/agent_rules.ts) |
+| model's answer | secrets and personal data, links to private addresses, markdown-image exfiltration | AnveGuard engine + [`guard/agent_rules.ts`](guard/agent_rules.ts) |
+| tool calls in the answer | data-drop services, credential files, file uploads, reverse shells, piping into a shell — in what the model is about to *run*, not in what it says: a model that warns you about an attack names it too | [`guard/agent_rules.ts`](guard/agent_rules.ts) |
 
 Supported APIs: OpenAI chat completions (`/v1/chat/completions`) and
 Anthropic messages (`/v1/messages`). Everything else passes through
@@ -99,10 +100,33 @@ curl -s localhost:8787/healthz                             # ok
 Then give the agent `http://127.0.0.1:8787/v1` as its API base URL instead of
 the provider's.
 
-**If the agent sends no key** — Hermes treats a `127.0.0.1` address as a local
-model server and sends `no-key-required` — put the provider key into `.env`
-as `GUARD_UPSTREAM_KEY` and keep the file at `chmod 600`. The first log line
-then ends in `key set by the guard`.
+**Give the key to the guard**, not the agent: `GUARD_UPSTREAM_KEY=…` in
+`.env`, the file at `chmod 600`. Hermes needs this anyway — it treats a
+`127.0.0.1` address as a local model server and sends `no-key-required` — and
+it is the better arrangement in any case. Once the only real key sits here,
+replace the agent's copy with a placeholder: every path around the guard
+(another alias, a stored session, `/model` with a built-in provider) then ends
+in a 401, and a hijacked agent has no key to steal.
+
+### Several providers
+
+Agents rarely use one. Hermes's subagents and helper tasks often talk to a
+different provider than its main model, and whatever does not come through
+the guard is not scanned. Name each one, with its key:
+
+```bash
+GUARD_UPSTREAMS=deepseek=https://api.deepseek.com,openrouter=https://openrouter.ai/api
+GUARD_KEY_DEEPSEEK=sk-…
+GUARD_KEY_OPENROUTER=sk-or-…
+```
+
+Each is reached under its name: `http://127.0.0.1:8787/deepseek/v1`,
+`http://127.0.0.1:8787/openrouter/v1`. The URL is the provider's base URL
+without `/v1`; the key variable is `GUARD_KEY_` and the name in upper case,
+`-` as `_` (`qwen-token` → `GUARD_KEY_QWEN_TOKEN`). `GUARD_UPSTREAM` can stay
+as the default for `/v1/…`, so an agent already pointed at the guard keeps
+working. A finding names its route (`"upstream":"openrouter"`); the startup
+log lists every route and whether the guard carries its key.
 
 The complete setup with Hermes and DLPrevent, including hardening the agent
 itself: [DLPrevent → docs/HERMES.md](https://github.com/dlprevent-dev/dlprevent/blob/main/docs/HERMES.md).
@@ -113,8 +137,10 @@ All in `guard/.env`, read when the container starts.
 
 | Variable | Default | |
 |---|---|---|
-| `GUARD_UPSTREAM` | — | The provider's base URL, without `/v1`. |
-| `GUARD_UPSTREAM_KEY` | — | The provider key, set on every forwarded request. Unset: the agent's key passes through. |
+| `GUARD_UPSTREAM` | — | Default provider for `/v1/…`: its base URL, without `/v1`. |
+| `GUARD_UPSTREAM_KEY` | — | The default provider's key, set on every forwarded request. Unset: the agent's key passes through. |
+| `GUARD_UPSTREAMS` | — | More providers, `name=url,name=url`, each under `/<name>/…`. At least one of this and `GUARD_UPSTREAM` is needed. |
+| `GUARD_KEY_<NAME>` | — | The key for route `<name>` (upper case, `-` as `_`). |
 | `GUARD_MODE` | `flag` | `flag`: forward everything, report findings. `block`: refuse a request whose verdict is `block` with a 403. A streamed answer is always forwarded and reported afterwards. |
 | `GUARD_POLICY` | — | Path to a JSON file overriding engine settings (`PolicySettings` in [`policy_engine.ts`](supabase/functions/_shared/policy_engine.ts)), mounted into the container; e.g. `{"pii_action": "sanitize"}` masks personal data and secrets before they reach the provider. |
 | `GUARD_PORT` | `8787` | Host port, bound to `127.0.0.1` only. |
@@ -147,7 +173,7 @@ dashboard shows.
 
 ```bash
 cd guard
-deno task test          # 13 tests: extraction, agent rules, end to end against a fake provider
+deno task test          # 19 tests: extraction, agent rules, routes, end to end against fake providers
 ```
 
 Upstream updates to the engine:
