@@ -106,6 +106,11 @@ export function textOf(content: unknown): string {
  * operator's own and is not scanned.
  */
 export function newPieces(body: Json): Piece[] {
+  return newSlots(body).map((s) => s.piece);
+}
+
+/** The new pieces, each with a way to replace its text in the request. */
+function newSlots(body: Json): { piece: Piece; set: (text: string) => void }[] {
   const messages = Array.isArray(body.messages) ? (body.messages as Json[]) : [];
   let start = 0;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -114,25 +119,41 @@ export function newPieces(body: Json): Piece[] {
       break;
     }
   }
-  const out: Piece[] = [];
+  const out: { piece: Piece; set: (text: string) => void }[] = [];
   for (const m of messages.slice(start)) {
     if (m.role === "tool") {
-      out.push({ direction: "tool_result", text: textOf(m.content), origin: str(m.name) ?? str(m.tool_call_id) });
+      out.push({ piece: { direction: "tool_result", text: textOf(m.content), origin: str(m.name) ?? str(m.tool_call_id) }, set: (t) => (m.content = t) });
     } else if (m.role === "user") {
       if (Array.isArray(m.content)) {
         for (const part of m.content as Json[]) {
           if (part?.type === "tool_result") {
-            out.push({ direction: "tool_result", text: textOf(part.content), origin: str(part.tool_use_id) });
+            out.push({ piece: { direction: "tool_result", text: textOf(part.content), origin: str(part.tool_use_id) }, set: (t) => (part.content = t) });
           } else if (typeof part?.text === "string") {
-            out.push({ direction: "input", text: part.text });
+            out.push({ piece: { direction: "input", text: part.text }, set: (t) => (part.text = t) });
           }
         }
       } else {
-        out.push({ direction: "input", text: textOf(m.content) });
+        out.push({ piece: { direction: "input", text: textOf(m.content) }, set: (t) => (m.content = t) });
       }
     }
   }
-  return out.filter((p) => p.text.trim().length > 0);
+  return out.filter((s) => s.piece.text.trim().length > 0);
+}
+
+/** What the model gets in place of a piece that was refused before. */
+const withheld = (why: string) => `[withheld by dlprevent-guard: this content was refused earlier (${why}). Tell the user it was blocked; do not try to fetch it again.]`;
+
+/** Refused pieces by hash, with the rules that refused them. The agent keeps
+ *  a refused tool result or message in its history and sends it again with
+ *  every later turn; refusing it again would end the session for good. From
+ *  the second time on it is replaced, and the rest goes through. */
+// ponytail: in memory, cleared when full or on restart — then the stuck
+// piece is refused once more and remembered again.
+const MAX_REFUSED = 10_000;
+
+async function digest(text: string): Promise<string> {
+  const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(h), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** The model's answer as text, and the tools it asks for — from a complete
@@ -366,6 +387,7 @@ export function route(cfg: Config, pathname: string): { name?: string; url: stri
 const SCANNED = ["/v1/chat/completions", "/chat/completions", "/v1/messages"];
 
 export function handler(cfg: Config, write: (r: Record) => Promise<void>) {
+  const refused = new Map<string, string>();
   return async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     if (url.pathname === "/healthz") return new Response("ok\n");
@@ -399,21 +421,33 @@ export function handler(cfg: Config, write: (r: Record) => Promise<void>) {
 
     // Fail-open: a guard that throws must not take the agent down with it.
     let blockedBy: Record | undefined;
+    let replaced = false;
     try {
-      for (const p of newPieces(body)) {
+      for (const { piece: p, set } of newSlots(body)) {
+        const hash = await digest(p.text);
+        const why = refused.get(hash);
+        if (why !== undefined) {
+          set(withheld(why));
+          replaced = true;
+          console.log(`guard: ${p.direction} withheld, refused before: ${why}`);
+          continue;
+        }
         const { verdict, layers } = await scan(p, cfg.settings, { model });
         if (verdict === "allow") continue;
         const block = cfg.mode === "block" && verdict === "block";
         const rec = record(p, verdict, layers, block, model, to.name);
         await write(rec);
-        if (block && !blockedBy) blockedBy = rec;
+        if (!block) continue;
+        if (refused.size >= MAX_REFUSED) refused.clear();
+        refused.set(hash, rec.layers.map((l) => l.rule ?? l.layer).join(", "));
+        blockedBy ??= rec;
       }
     } catch (e) {
       console.error("guard: input scan failed, forwarding (fail-open):", e instanceof Error ? e.message : e);
     }
     if (blockedBy) return refusal(blockedBy, anthropic);
 
-    const resp = await fetch(target, { method: "POST", headers, body: raw });
+    const resp = await fetch(target, { method: "POST", headers, body: replaced ? JSON.stringify(body) : raw });
     const type = resp.headers.get("content-type") ?? "";
     if (!resp.ok || !resp.body) return relay(resp);
 

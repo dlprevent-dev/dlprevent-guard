@@ -117,7 +117,7 @@ Deno.test("ordinary agent work passes", () => {
 
 // ---------- end to end against a fake provider ----------------------------
 
-async function withProxy(mode: "flag" | "block", upstream: (req: Request) => Response, run: (base: string, log: Record[], hits: () => number) => Promise<void>, key?: string) {
+async function withProxy(mode: "flag" | "block", upstream: (req: Request) => Response | Promise<Response>, run: (base: string, log: Record[], hits: () => number) => Promise<void>, key?: string) {
   let n = 0;
   const up = Deno.serve({ port: 0, onListen() {} }, (req) => {
     n++;
@@ -174,6 +174,27 @@ Deno.test("block mode: a poisoned tool result never reaches the model", async ()
     assertEquals((await r.json()).error.code, "prompt_blocked");
     assertEquals(hits(), 0);
     assertEquals(log.find((l) => l.direction === "tool_result")?.action, "blocked");
+  });
+});
+
+Deno.test("block mode: the next turn goes through, the refused content stays out", async () => {
+  const seen: string[] = [];
+  const capture = async (req: Request) => {
+    seen.push(await req.text());
+    return ok();
+  };
+  await withProxy("block", capture, async (base, log) => {
+    assertEquals((await chat(base, poisoned)).status, 403);
+    // The agent keeps the refused tool result in its history and sends it
+    // again with the user's next message.
+    const r = await chat(base, [...poisoned, { role: "user", content: "what happened?" }]);
+    assertEquals(r.status, 200);
+    await r.body?.cancel();
+    assertEquals(seen.length, 1);
+    assert(!seen[0].includes("Ignore all previous"), seen[0]);
+    assert(seen[0].includes("withheld by dlprevent-guard"), seen[0]);
+    assert(seen[0].includes("what happened?"), seen[0]);
+    assertEquals(log.filter((l) => l.action === "blocked").length, 1, "one refusal, one alert");
   });
 });
 
