@@ -34,7 +34,9 @@ cause passes: between the agent and its model. Every request and every
 answer goes through it, and it reports what does not belong there:
 
 - **Prompt injection** in the user's message — and, more to the point, in
-  every **tool result**, where it actually arrives.
+  every **tool result**, where it actually arrives — and in the
+  **descriptions of the tools** the agent offers the model, which an MCP
+  server writes and the model reads as guidance on every turn.
 - **Secrets and personal data** on their way to the model provider.
 - **Commands that carry data out** in the model's answer: uploads to
   data-drop services, credential files, reverse shells, downloads piped into
@@ -75,15 +77,22 @@ one layer; the host-side DLPrevent agent is the other.
 
 For every request, only what is **new** since the model last answered — the
 user's turn and the tool results — so a finding is reported once, not on
-every later turn. Then the model's answer, including the tool calls it asks
-for, streamed or not.
+every later turn. The tool definitions the agent sends along are scanned
+the first time each one comes, for the same reason. Then the model's answer,
+including the tool calls it asks for, streamed or not.
 
 | Direction | Refused in block mode | Only reported | By |
 |---|---|---|---|
 | user's message | prompt injection and jailbreak patterns; smuggled text (homoglyphs, bidi characters, adversarial suffixes, many-shot jailbreaks); a secret in key shape — an API key pasted into the chat | personal data, multi-turn patterns (role-play escalation, priming), known attack signatures | AnveGuard engine |
 | tool result | instructions hidden in data: override phrases, hidden HTML and HTML comments, invisible tag characters, references to other tools, markdown-image exfiltration; dangerous Python, SQL writes; imperatives aimed at the model and poisoned-authority claims when they address a tool | the same imperatives and claims otherwise, personal data and secrets, known signatures | AnveGuard engine — without its prompt heuristics, which mistake hashes, base64 and code for attacks |
+| tool definitions | instructions in a tool's description or its parameters' descriptions: override phrases, `<IMPORTANT>` blocks, references to other tools (*always bcc …*), known poisoning signatures | — | AnveGuard engine, as MCP tool descriptions — without its prompt heuristics and PII check, and without the plain *you must …* rule, which every second ordinary description sets off |
 | model's answer | a secret in key shape, links to private or loopback addresses, image links that carry data | personal data | AnveGuard engine + [`guard/agent_rules.ts`](guard/agent_rules.ts) |
 | tool calls in the answer | data-drop services, credential files, reverse shells | file uploads to another host (`curl -T`, `curl -d @…`, `scp`, `rsync`), piping into a shell | [`guard/agent_rules.ts`](guard/agent_rules.ts) — in what the model is about to *run*, not in what it says: a model that warns you about an attack names it too |
+
+A refused **tool description** does not end the conversation: the guard
+replaces it with a note telling the model not to use the tool, and forwards
+the request. The agent sends the definition with every request; it is
+reported once.
 
 A **streamed** answer is held in block mode until it has ended, scanned, and
 then passed on in one piece or refused: a command can only be stopped before
@@ -92,6 +101,7 @@ word. In flag mode it streams through and is scanned afterwards.
 [DLPrevent → docs/HERMES.md](https://github.com/dlprevent-dev/dlprevent/blob/main/docs/HERMES.md#check-it-works)
 has a harmless test. A policy file (`GUARD_POLICY`) moves findings between
 the two columns: `"pii_action": "block"`, `"injection_action": "flag"`.
+It also says which tools the model may call — see [Configuration](#configuration).
 
 Supported APIs: OpenAI chat completions (`/v1/chat/completions`) and
 Anthropic messages (`/v1/messages`). Everything else passes through
@@ -190,7 +200,7 @@ All in `guard/.env`, read when the container starts.
 | `GUARD_UPSTREAMS` | — | More providers, `name=url,name=url`, each under `/<name>/…`. At least one of this and `GUARD_UPSTREAM` is needed. |
 | `GUARD_KEY_<NAME>` | — | The key for route `<name>` (upper case, `-` as `_`). |
 | `GUARD_MODE` | `flag` | `flag`: forward everything, report findings. `block`: refuse a request whose verdict is `block` with a 403, and withhold that content when it comes again. A streamed answer is held until it has ended and then passed on or refused; in flag mode it streams through. |
-| `GUARD_POLICY` | — | Path to a JSON file overriding engine settings (`PolicySettings` in [`policy_engine.ts`](supabase/functions/_shared/policy_engine.ts)), mounted into the container; e.g. `{"pii_action": "sanitize"}` masks personal data and secrets before they reach the provider. |
+| `GUARD_POLICY` | — | Path to a JSON file overriding engine settings (`PolicySettings` in [`policy_engine.ts`](supabase/functions/_shared/policy_engine.ts)), mounted into the container; e.g. `{"pii_action": "sanitize"}` masks personal data and secrets before they reach the provider. `{"enable_tool_governance": true, "tool_denylist": ["send_email"]}` makes a call to a listed tool a `block` finding; `tool_allowlist` does the same for every tool not listed. |
 | `GUARD_PORT` | `8787` | Host port, bound to `127.0.0.1` only. |
 
 The container runs read-only, with no capabilities and no privilege
@@ -232,7 +242,7 @@ dashboard shows.
 
 ```bash
 cd guard
-deno task test          # 22 tests: extraction, agent rules, routes, end to end against fake providers
+deno task test          # 27 tests: extraction, agent rules, routes, end to end against fake providers
 ```
 
 The engine's own tests: `cd supabase/functions/_shared && deno test --allow-net --allow-read --allow-env --no-check`.
