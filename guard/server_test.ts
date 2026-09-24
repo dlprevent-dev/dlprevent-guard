@@ -79,14 +79,14 @@ Deno.test("ordinary agent work passes", () => {
 
 // ---------- end to end against a fake provider ----------------------------
 
-async function withProxy(mode: "flag" | "block", upstream: (req: Request) => Response, run: (base: string, log: Record[], hits: () => number) => Promise<void>) {
+async function withProxy(mode: "flag" | "block", upstream: (req: Request) => Response, run: (base: string, log: Record[], hits: () => number) => Promise<void>, key?: string) {
   let n = 0;
   const up = Deno.serve({ port: 0, onListen() {} }, (req) => {
     n++;
     return upstream(req);
   });
   const log: Record[] = [];
-  const cfg: Config = { upstream: `http://127.0.0.1:${up.addr.port}`, mode, log: "", settings: GUARD_SETTINGS };
+  const cfg: Config = { upstream: `http://127.0.0.1:${up.addr.port}`, mode, log: "", settings: GUARD_SETTINGS, key };
   const guard = Deno.serve({ port: 0, onListen() {} }, handler(cfg, async (r) => void log.push(r)));
   try {
     await run(`http://127.0.0.1:${guard.addr.port}`, log, () => n);
@@ -165,6 +165,29 @@ Deno.test("a streamed answer is passed on and scanned afterwards", async () => {
     assert(out, "the answer was scanned");
     assertEquals(out.action, "forwarded", "a stream is reported, never cut");
     assert(out.layers.some((l) => l.rule === "agent_exfil_service"), JSON.stringify(out));
+  });
+});
+
+Deno.test("the guard's key replaces the agent's placeholder", async () => {
+  let seen = "";
+  const upstream = (req: Request) => {
+    seen = req.headers.get("authorization") ?? "";
+    return ok();
+  };
+  await withProxy("flag", upstream, async (base) => {
+    const r = await fetch(`${base}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer no-key-required" },
+      body: JSON.stringify({ model: "m", messages: [{ role: "user", content: "hi" }] }),
+    });
+    await r.body?.cancel();
+    assertEquals(seen, "Bearer sk-real");
+  }, "sk-real");
+  // Without one, the agent's key passes through as it came.
+  await withProxy("flag", upstream, async (base) => {
+    const r = await chat(base, [{ role: "user", content: "hi" }]);
+    await r.body?.cancel();
+    assertEquals(seen, "Bearer sk-test");
   });
 });
 

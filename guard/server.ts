@@ -259,6 +259,11 @@ export interface Config {
   mode: Mode;
   log: string;
   settings: PolicySettings;
+  /** The provider key, if the guard is to set it. An agent that takes a
+   *  127.0.0.1 address for a local model server sends a placeholder
+   *  instead of its key (Hermes: `no-key-required`); then the guard has to
+   *  carry the key itself. Unset: the agent's key passes through. */
+  key?: string;
 }
 
 /** Paths whose bodies are scanned. Everything else passes through as is. */
@@ -273,6 +278,10 @@ export function handler(cfg: Config, write: (r: Record) => Promise<void>) {
     headers.delete("host");
     headers.delete("content-length");
     const anthropic = url.pathname.endsWith("/messages");
+    if (cfg.key) {
+      headers.set("authorization", `Bearer ${cfg.key}`);
+      if (anthropic) headers.set("x-api-key", cfg.key);
+    }
 
     if (req.method !== "POST" || !SCANNED.includes(url.pathname)) {
       return relay(await fetch(target, { method: req.method, headers, body: req.body }));
@@ -391,13 +400,14 @@ if (import.meta.main) {
     mode,
     log: Deno.env.get("GUARD_LOG") ?? "/var/log/dlprevent-guard/verdicts.jsonl",
     settings: await loadSettings(Deno.env.get("GUARD_POLICY")),
+    key: Deno.env.get("GUARD_UPSTREAM_KEY") || undefined,
   };
   const write = async (r: Record) => {
     console.log(`guard: ${r.direction} ${r.verdict} ${r.action} ${r.layers.map((l) => l.rule ?? l.layer).join(",")}`);
     await Deno.writeTextFile(cfg.log, JSON.stringify(r) + "\n", { append: true, create: true });
   };
   const port = Number(Deno.env.get("GUARD_PORT") ?? "8787");
-  console.log(`dlprevent-guard on :${port} -> ${upstream}, mode ${mode}, log ${cfg.log}`);
+  console.log(`dlprevent-guard on :${port} -> ${upstream}, mode ${mode}, log ${cfg.log}, key ${cfg.key ? "set by the guard" : "from the agent"}`);
   const handle = handler(cfg, write);
   // One line per request: whether the agent goes through the guard at all
   // is the first thing anyone asks, and findings alone cannot answer it.

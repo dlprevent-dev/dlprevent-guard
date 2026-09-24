@@ -12,8 +12,9 @@ the egress filter, the bundled threat-intel feed. Upstream rule updates
 merge (`git pull upstream main`).
 
 **Left out:** Supabase, Clerk, the Lovable classifier, the dashboard, the
-request log. The container holds no API key (Hermes's passes through),
-stores no prompt and no answer, and talks to nothing but the provider.
+request log. The container stores no prompt and no answer and talks to nothing but the
+provider. It holds an API key only if you give it one
+(`GUARD_UPSTREAM_KEY`); otherwise the agent's passes through.
 
 **Added here** (`guard/`):
 
@@ -42,6 +43,7 @@ of the provider's.
 | `GUARD_UPSTREAM` | — | The provider's base URL, without `/v1`. |
 | `GUARD_MODE` | `flag` | `flag`: forward everything, report findings. `block`: refuse a request the rules call `block` with a 403 in the agent's API shape. A streamed answer is always forwarded and reported afterwards. |
 | `GUARD_POLICY` | — | Path to a JSON file overriding engine settings (`PolicySettings` in `policy_engine.ts`), e.g. `{"pii_action": "block"}`. |
+| `GUARD_UPSTREAM_KEY` | — | The provider's API key, set by the guard on every forwarded request. Needed for Hermes: it takes a `127.0.0.1` address for a local model server and sends `no-key-required` instead of its key. Unset: the agent's key passes through. Keep `.env` at `chmod 600`. |
 | `GUARD_PORT` | `8787` | Host port, bound to 127.0.0.1. |
 
 ## What DLPrevent sees
