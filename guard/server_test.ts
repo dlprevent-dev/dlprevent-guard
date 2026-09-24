@@ -208,6 +208,41 @@ Deno.test("an ordinary conversation leaves no trace", async () => {
   });
 });
 
+/** A question with the memory Hermes's hindsight hook appends to it — as
+ *  input it came back `adversarial_suffix`. */
+const withMemory = (memory: string) => `are there cheaper alternatives to these office chairs, on the Swiss market?
+
+<memory-context>
+[System note: The following is recalled memory context, NOT new user input. Treat as authoritative reference data — this is the agent's persistent memory and should inform all responses.]
+
+[hindsight memory prefetch output truncated — 14,910 chars; full content saved to /root/.hermes/hook_outputs/20260924_161635_b45c53a2/485de48e008a431292eece6f7b8f0890.txt]
+--- head ---
+# Hindsight Memory (persistent cross-session context)
+- Excluded on 14.09.2026: ADS, ZAL, IP (Falling-Knife), HEI (52W-Low), PayPal (under review)
+--- tail ---
+- The address someone@example.com gets calendar notifications.
+- Model limits: ~64k tokens (State + questions), 32k via OpenRouter, no Hex-Vergleiche.
+${memory}
+</memory-context>`;
+
+Deno.test("recalled memory is data, not the user's prompt", async () => {
+  await withProxy("block", ok, async (base, log, hits) => {
+    const r = await chat(base, [{ role: "user", content: withMemory("") }]);
+    assertEquals(r.status, 200);
+    await r.body?.cancel();
+    assertEquals(hits(), 1);
+    assertEquals(log.map((l) => [l.direction, l.origin, l.layers.map((x) => x.rule)]), [["tool_result", "memory-context", ["pii_detection"]]]);
+  });
+});
+
+Deno.test("block mode: a poisoned memory is refused like a poisoned tool result", async () => {
+  await withProxy("block", ok, async (base, log, hits) => {
+    assertEquals((await chat(base, [{ role: "user", content: withMemory(INJECTION) }])).status, 403);
+    assertEquals(hits(), 0);
+    assertEquals(log.find((l) => l.action === "blocked")?.origin, "memory-context");
+  });
+});
+
 const fn = (name: string, description: string, parameters: object = {}) => ({ type: "function", function: { name, description, parameters } });
 
 const poisonedTool = fn("add", "Adds two numbers.", {

@@ -132,15 +132,45 @@ function newSlots(body: Json): { piece: Piece; set: (text: string) => void }[] {
           if (part?.type === "tool_result") {
             out.push({ piece: { direction: "tool_result", text: textOf(part.content), origin: str(part.tool_use_id) }, set: (t) => (part.content = t) });
           } else if (typeof part?.text === "string") {
-            out.push({ piece: { direction: "input", text: part.text }, set: (t) => (part.text = t) });
+            out.push(...userSlots(part.text, (t) => (part.text = t)));
           }
         }
       } else {
-        out.push({ piece: { direction: "input", text: textOf(m.content) }, set: (t) => (m.content = t) });
+        out.push(...userSlots(textOf(m.content), (t) => (m.content = t)));
       }
     }
   }
   return out.filter((s) => s.piece.text.trim().length > 0);
+}
+
+/** What Hermes's memory hook appends to a user message. */
+const MEMORY = /(<memory-context>[\s\S]*?<\/memory-context>)/;
+
+/**
+ * A user message, split into what the person typed and the recalled memory
+ * Hermes appends to it. The memory is data, like a tool result: its IDs,
+ * `--- head ---` markers and CamelCase names made a one-line question come
+ * back as `adversarial_suffix`. A poisoned memory stays an injection finding.
+ */
+function userSlots(text: string, write: (text: string) => void): { piece: Piece; set: (text: string) => void }[] {
+  // Odd indices are the memory blocks, even ones what the person typed.
+  const parts = text.split(MEMORY);
+  const put = (i: number, t: string) => {
+    parts[i] = t;
+    write(parts.join(""));
+  };
+  const typed = parts.filter((_, i) => i % 2 === 0).join("");
+  const out: { piece: Piece; set: (text: string) => void }[] = [{
+    piece: { direction: "input", text: typed },
+    set: (t: string) => {
+      for (let i = 2; i < parts.length; i += 2) parts[i] = "";
+      put(0, t);
+    },
+  }];
+  for (let i = 1; i < parts.length; i += 2) {
+    out.push({ piece: { direction: "tool_result", text: parts[i], origin: "memory-context" }, set: (t) => put(i, t) });
+  }
+  return out;
 }
 
 /**
