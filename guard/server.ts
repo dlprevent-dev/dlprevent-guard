@@ -246,6 +246,23 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
   return { verdict: layers.length ? aggregate(layers, settings) : r.verdict, layers };
 }
 
+/** Which layer's reason an alert should lead with. The reader sees the
+ *  first reason only, and upstream lists the vaguest first: "ignore all
+ *  previous instructions" came out as "Persona-bypass language requesting an
+ *  unrestricted model". The specific finding goes first, the heuristic last. */
+const LEAD: { [layer: string]: number } = {
+  injection: 0,
+  egress: 1,
+  tool_governance: 1,
+  threat_intel: 2,
+  keywords: 2,
+  patterns: 3,
+  classifier: 3,
+  ml_detection: 3,
+  heuristics: 5,
+  behavioral: 6,
+};
+
 export function record(p: Piece, verdict: Verdict, layers: LayerVerdict[], blocked: boolean, model?: string): Record {
   return {
     at: new Date().toISOString(),
@@ -258,6 +275,7 @@ export function record(p: Piece, verdict: Verdict, layers: LayerVerdict[], block
     // `matched` and `spans` are left out on purpose: they are the text.
     layers: layers
       .filter((l) => l.verdict !== "allow")
+      .sort((a, b) => (LEAD[a.layer] ?? 4) - (LEAD[b.layer] ?? 4))
       .map((l) => ({ layer: l.layer, rule: l.rule, verdict: l.verdict, reason: l.reason?.slice(0, MAX_REASON) })),
   };
 }

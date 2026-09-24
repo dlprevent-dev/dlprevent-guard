@@ -139,6 +139,7 @@ Deno.test("flag mode: a poisoned tool result is reported and still forwarded", a
     assert(rec, JSON.stringify(log));
     assertEquals(rec.action, "forwarded");
     assertEquals(rec.origin, "web_extract");
+    assertEquals(rec.layers[0].layer, "injection", "the specific finding leads, not the heuristic");
     assert(rec.verdict !== "allow");
     // Metadata only: nothing of the text itself.
     assert(!JSON.stringify(log).includes("id_rsa"), JSON.stringify(log));
