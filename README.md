@@ -112,6 +112,20 @@ curl -s localhost:8787/healthz                             # ok
 Then give the agent `http://127.0.0.1:8787/v1` as its API base URL instead of
 the provider's.
 
+**While the repository is private**, the host needs a key to clone and pull
+it. A read-only deploy key reaches this repository and nothing else:
+
+```bash
+ssh-keygen -t ed25519 -N '' -C "$(hostname)-deploy" -f /root/.ssh/dlprevent-guard-deploy
+printf 'Host github.com\n  IdentityFile /root/.ssh/dlprevent-guard-deploy\n  IdentitiesOnly yes\n' >> /root/.ssh/config
+cat /root/.ssh/dlprevent-guard-deploy.pub    # → GitHub: Settings → Deploy keys, write access off
+git clone git@github.com:dlprevent-dev/dlprevent-guard.git
+```
+
+Updates: `git pull && docker compose up -d --build` in `guard/`. The
+`.env` belongs in `guard/`, next to `compose.yml`; one in the repository root
+is not read.
+
 **Give the key to the guard**, not the agent: `GUARD_UPSTREAM_KEY=…` in
 `.env`, the file at `chmod 600`. Hermes needs this anyway — it treats a
 `127.0.0.1` address as a local model server and sends `no-key-required` — and
