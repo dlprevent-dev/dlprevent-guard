@@ -85,10 +85,11 @@ for, streamed or not.
 | model's answer | a secret in key shape, links to private or loopback addresses, image links that carry data | personal data | AnveGuard engine + [`guard/agent_rules.ts`](guard/agent_rules.ts) |
 | tool calls in the answer | data-drop services, credential files, reverse shells | file uploads to another host (`curl -T`, `curl -d @…`, `scp`, `rsync`), piping into a shell | [`guard/agent_rules.ts`](guard/agent_rules.ts) — in what the model is about to *run*, not in what it says: a model that warns you about an attack names it too |
 
-The last two rows are refused only if the answer is **not streamed**: a
-streamed answer reaches the agent as it arrives and is scanned when it has
-ended. Whether your agent streams decides whether block mode can stop a
-command at all; [DLPrevent → docs/HERMES.md](https://github.com/dlprevent-dev/dlprevent/blob/main/docs/HERMES.md#check-it-works)
+A **streamed** answer is held in block mode until it has ended, scanned, and
+then passed on in one piece or refused: a command can only be stopped before
+the agent has it. The agent sees the answer arrive at once instead of word by
+word. In flag mode it streams through and is scanned afterwards.
+[DLPrevent → docs/HERMES.md](https://github.com/dlprevent-dev/dlprevent/blob/main/docs/HERMES.md#check-it-works)
 has a harmless test. A policy file (`GUARD_POLICY`) moves findings between
 the two columns: `"pii_action": "block"`, `"injection_action": "flag"`.
 
@@ -174,7 +175,7 @@ All in `guard/.env`, read when the container starts.
 | `GUARD_UPSTREAM_KEY` | — | The default provider's key, set on every forwarded request. Unset: the agent's key passes through. |
 | `GUARD_UPSTREAMS` | — | More providers, `name=url,name=url`, each under `/<name>/…`. At least one of this and `GUARD_UPSTREAM` is needed. |
 | `GUARD_KEY_<NAME>` | — | The key for route `<name>` (upper case, `-` as `_`). |
-| `GUARD_MODE` | `flag` | `flag`: forward everything, report findings. `block`: refuse a request whose verdict is `block` with a 403, and withhold that content when it comes again. A streamed answer is always forwarded and reported afterwards. |
+| `GUARD_MODE` | `flag` | `flag`: forward everything, report findings. `block`: refuse a request whose verdict is `block` with a 403, and withhold that content when it comes again. A streamed answer is held until it has ended and then passed on or refused; in flag mode it streams through. |
 | `GUARD_POLICY` | — | Path to a JSON file overriding engine settings (`PolicySettings` in [`policy_engine.ts`](supabase/functions/_shared/policy_engine.ts)), mounted into the container; e.g. `{"pii_action": "sanitize"}` masks personal data and secrets before they reach the provider. |
 | `GUARD_PORT` | `8787` | Host port, bound to `127.0.0.1` only. |
 
@@ -217,7 +218,7 @@ dashboard shows.
 
 ```bash
 cd guard
-deno task test          # 20 tests: extraction, agent rules, routes, end to end against fake providers
+deno task test          # 22 tests: extraction, agent rules, routes, end to end against fake providers
 ```
 
 The engine's own tests: `cd supabase/functions/_shared && deno test --allow-net --allow-read --allow-env --no-check`.

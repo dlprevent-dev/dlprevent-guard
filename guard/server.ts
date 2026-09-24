@@ -15,8 +15,9 @@
 //   2. GUARD_MODE=block refuses a request whose verdict is `block`;
 //      GUARD_MODE=flag (the default) forwards everything and only reports.
 //   3. The model's answer is scanned as output, including the tool calls it
-//      asks for. A streamed answer is scanned when the stream has ended, so
-//      it is reported, never stopped.
+//      asks for. A streamed answer is held until it has ended in block mode,
+//      then passed on or refused; in flag mode it streams through and the
+//      copy is scanned afterwards.
 //
 // Every verdict other than `allow` is appended as one JSON line to
 // GUARD_LOG. The DLPrevent Linux agent reads that file and turns each line
@@ -452,10 +453,20 @@ export function handler(cfg: Config, write: (r: Record) => Promise<void>) {
     if (!resp.ok || !resp.body) return relay(resp);
 
     if (type.includes("text/event-stream")) {
-      // Stream to the agent at once; scan the copy when it has ended.
-      const [toAgent, toScan] = resp.body.tee();
-      scanStream(toScan, cfg, model, to.name, write);
-      return relay(resp, toAgent);
+      if (cfg.mode === "flag") {
+        // Stream to the agent at once; scan the copy when it has ended.
+        const [toAgent, toScan] = resp.body.tee();
+        scanStream(toScan, cfg, model, to.name, write);
+        return relay(resp, toAgent);
+      }
+      // Block mode: a command can only be stopped before the agent has it.
+      // On the Hermes host every answer came streamed, and a tool call on a
+      // key file went through as `block forwarded`. So the whole stream is
+      // held, scanned, and then passed on in one piece or refused.
+      const sse = await resp.text();
+      const rec = await scanSse(sse, cfg, model, to.name, write, true);
+      if (rec?.action === "blocked") return refusal(rec, anthropic);
+      return relay(resp, sse);
     }
 
     const text = await resp.text();
@@ -480,16 +491,27 @@ export function handler(cfg: Config, write: (r: Record) => Promise<void>) {
 
 async function scanStream(stream: ReadableStream<Uint8Array>, cfg: Config, model: string | undefined, upstream: string | undefined, write: (r: Record) => Promise<void>) {
   try {
+    await scanSse(await new Response(stream).text(), cfg, model, upstream, write, false);
+  } catch (e) {
+    console.error("guard: stream scan failed:", e instanceof Error ? e.message : e);
+  }
+}
+
+/** Scan a whole streamed answer. `mayBlock`: the agent does not have it yet. */
+async function scanSse(sse: string, cfg: Config, model: string | undefined, upstream: string | undefined, write: (r: Record) => Promise<void>, mayBlock: boolean): Promise<Record | undefined> {
+  try {
     const c = new StreamCollector();
-    const dec = new TextDecoder();
-    for await (const chunk of stream) c.push(dec.decode(chunk, { stream: true }));
+    c.push(sse + "\n");
     const text = c.text();
     if (!text) return;
     const p: Piece = { direction: "output", text, calls: c.calls() };
     const { verdict, layers } = await scan(p, cfg.settings, { model, tools: c.tools });
-    if (verdict !== "allow") await write(record(p, verdict, layers, false, model, upstream));
+    if (verdict === "allow") return;
+    const rec = record(p, verdict, layers, mayBlock && cfg.mode === "block" && verdict === "block", model, upstream);
+    await write(rec);
+    return rec;
   } catch (e) {
-    console.error("guard: stream scan failed:", e instanceof Error ? e.message : e);
+    console.error("guard: stream scan failed, forwarding (fail-open):", e instanceof Error ? e.message : e);
   }
 }
 
