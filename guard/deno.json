@@ -1,0 +1,7 @@
+{
+  "nodeModulesDir": "none",
+  "tasks": {
+    "start": "deno run --allow-net --allow-env --allow-read --allow-write=/var/log/dlprevent-guard server.ts",
+    "test": "deno test --allow-net --allow-read --allow-env"
+  }
+}
