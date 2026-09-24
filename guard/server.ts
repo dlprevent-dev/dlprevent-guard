@@ -406,7 +406,10 @@ if (import.meta.main) {
     const t = performance.now();
     const resp = await handle(req);
     const path = new URL(req.url).pathname;
-    if (path !== "/healthz") console.log(`${req.method} ${path} -> ${resp.status} ${Math.round(performance.now() - t)}ms`);
+    // Whether a key came along, never the key: a 401 from the provider is
+    // otherwise impossible to tell apart from a key the agent never sent.
+    const auth = req.headers.has("authorization") || req.headers.has("x-api-key") ? "key" : "no key";
+    if (path !== "/healthz") console.log(`${req.method} ${path} -> ${resp.status} ${Math.round(performance.now() - t)}ms (${auth})`);
     return resp;
   });
 }
