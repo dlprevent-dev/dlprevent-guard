@@ -1,1 +1,0 @@
-ALTER TABLE public.endpoints ENABLE ROW LEVEL SECURITY;

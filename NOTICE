@@ -3,7 +3,8 @@ dlprevent-guard
 This product is a fork of AnveGuard (prompt-sentinel-flow)
   https://github.com/ANVE-AI/prompt-sentinel-flow
 by ANVE-AI, licensed under the Apache License, Version 2.0.
-All files taken from AnveGuard are included unmodified.
+Only AnveGuard's policy engine (supabase/functions/_shared/) is included,
+unmodified; its dashboard, edge functions and other files are omitted.
 
 Changes in this fork (2026), also licensed under the Apache License,
 Version 2.0, by the DLPrevent project (info@dlprevent.ch):
@@ -13,7 +14,7 @@ Version 2.0, by the DLPrevent project (info@dlprevent.ch):
     a self-contained proxy that runs AnveGuard's policy engine between an
     AI agent and its model provider, rules for agent commands, and its
     container.
-  - README.md: replaced; AnveGuard's README is kept as README.upstream.md.
+  - README.md: replaced.
   - docs/images/dlprevent-logo.svg: the DLPrevent logo.
 
 "AnveGuard" is a name of ANVE-AI. This fork is not affiliated with or

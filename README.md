@@ -187,28 +187,24 @@ cd guard
 deno task test          # 19 tests: extraction, agent rules, routes, end to end against fake providers
 ```
 
-Upstream updates to the engine:
+The engine's own tests: `cd supabase/functions/_shared && deno test --allow-net --allow-read --allow-env --no-check`.
+
+Only AnveGuard's engine is kept here; its dashboard, edge functions and the
+rest are left out. Engine updates come from upstream by path:
 
 ```bash
 git remote add upstream https://github.com/ANVE-AI/prompt-sentinel-flow.git   # once
 git remote set-url --push upstream no-push-to-anveguard                        # once
-git pull upstream main
+git fetch upstream && git checkout upstream/main -- supabase/functions/_shared
 ```
 
-CI: `.github/workflows/guard.yml` runs the guard's tests and builds the
-container; upstream's `ci.yml` (their dashboard and engine) is left as it is.
-
-The guard only adds files under `guard/`, `NOTICE`, this README and one logo;
-upstream's own files are unchanged, so their updates merge. The one file both
-sides touch is `README.md` — upstream's lives on as
-[`README.upstream.md`](README.upstream.md); on a conflict, keep this one and
-carry their changes over there.
+Then run both test suites before committing. CI (`.github/workflows/guard.yml`)
+runs them and builds the container.
 
 ## Credits and license
 
 The detection engine — everything under
-[`supabase/functions/_shared/`](supabase/functions/_shared) and the rest of
-the upstream tree — is **AnveGuard** by
+[`supabase/functions/_shared/`](supabase/functions/_shared) — is **AnveGuard** by
 [ANVE-AI](https://github.com/ANVE-AI/prompt-sentinel-flow), unmodified,
 under the [Apache License 2.0](LICENSE). Its patterns, heuristics, tool-result
 scanner, PII detection and threat-intelligence feed do the actual work here;
