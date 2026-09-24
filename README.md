@@ -169,6 +169,17 @@ findings, one JSON line each, in `/var/log/dlprevent-guard/verdicts.jsonl`:
 The most specific rule comes first: that is the reason the DLPrevent
 dashboard shows.
 
+## When it does not work
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `no configuration file provided` / `GUARD_UPSTREAM is missing` | `docker compose` run outside `guard/`, or `.env` not in `guard/` | `cd dlprevent-guard/guard`; `cut -d= -f1 .env` lists what is set |
+| The agent gets `401 … Your api key: ****ired is invalid` | it sends `no-key-required` to a `127.0.0.1` address | the key into `.env` (`GUARD_UPSTREAM_KEY` / `GUARD_KEY_<NAME>`), `docker compose up -d`; the startup log then says `key set by the guard` |
+| Log full of `GET /api/tags`, `/props`, `/version` -> 404 | the agent probing for a local model server | harmless; `GET /v1/models -> 200` means the key works |
+| Only the startup lines, no `POST` while the agent is used | the agent does not come through the guard: its `base_url`, an alias or fallback provider, or a session stored from before the switch | see the table in [DLPrevent → docs/HERMES.md](https://github.com/dlprevent-dev/dlprevent/blob/main/docs/HERMES.md#when-it-does-not-work) |
+| Findings on ordinary tool output (hashes, base64, code) | a version before `a9faa21` | `git pull && docker compose up -d --build` |
+| The model's *warning* about an attack is reported as the attack | a version before `e0275e4` | `git pull && docker compose up -d --build` |
+
 ## Develop
 
 ```bash
