@@ -191,8 +191,12 @@ Upstream updates to the engine:
 
 ```bash
 git remote add upstream https://github.com/ANVE-AI/prompt-sentinel-flow.git   # once
+git remote set-url --push upstream no-push-to-anveguard                        # once
 git pull upstream main
 ```
+
+CI: `.github/workflows/guard.yml` runs the guard's tests and builds the
+container; upstream's `ci.yml` (their dashboard and engine) is left as it is.
 
 The guard only adds files under `guard/`, `NOTICE`, this README and one logo;
 upstream's own files are unchanged, so their updates merge. The one file both

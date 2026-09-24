@@ -1,0 +1,26 @@
+# The guard's own tests. Upstream's ci.yml builds AnveGuard's dashboard and
+# runs the engine's tests; it stays as it is so their updates merge. This
+# one covers what the fork adds: the proxy, the agent rules, the routes.
+name: guard
+
+on:
+  push:
+    branches: [main, dev]
+    paths: ["guard/**", "supabase/functions/_shared/**", ".github/workflows/guard.yml"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Tests
+        working-directory: guard
+        run: deno test --allow-net --allow-read --allow-env
+      - name: Container builds
+        run: docker build -q -f guard/Dockerfile -t dlprevent-guard:ci .
