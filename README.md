@@ -1,493 +1,184 @@
 <div align="center">
 
-<img src="docs/images/banner.png" alt="AnveGuard — the open-source LLM firewall" width="100%" />
+<img src="docs/images/dlprevent-logo.svg" alt="" width="128" height="128">
 
-# 🛡️ AnveGuard
+# dlprevent-guard
 
-**The open-source LLM firewall.**
-A drop-in OpenAI-compatible proxy that inspects, governs, and audits every call to OpenAI, Anthropic, Google, Perplexity, and any custom provider — without changing your application code.
+**A prompt-injection and data-loss guard between an AI agent and its model — one container, reporting to DLPrevent**
 
-[![CI](https://img.shields.io/badge/CI-passing-22c55e?style=flat-square&logo=githubactions&logoColor=white)](./.github/workflows/ci.yml)
-[![License: Apache 2.0](https://img.shields.io/badge/license-Apache_2.0-blue?style=flat-square)](./LICENSE)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-ff69b4?style=flat-square)](./CONTRIBUTING.md)
-[![Detectors: 60+](https://img.shields.io/badge/detectors-60%2B-7c3aed?style=flat-square)](./supabase/functions/_shared/policy_engine.ts)
-[![Tests: 130+](https://img.shields.io/badge/tests-130%2B%20passing-22c55e?style=flat-square)](./supabase/functions/_shared/policy_engine_attacks.test.ts)
-[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?style=flat-square&logo=typescript&logoColor=white)](./tsconfig.json)
-[![Deno Edge](https://img.shields.io/badge/Deno-edge%20functions-000?style=flat-square&logo=deno&logoColor=white)](./supabase/functions)
+Built on the policy engine of [AnveGuard](https://github.com/ANVE-AI/prompt-sentinel-flow)
+by ANVE-AI. See [Credits and license](#credits-and-license).
 
-### [🚀 Live demo](https://guard.citerlabs.com) · [📚 Docs](https://guard.citerlabs.com/docs) · [🔐 Security policy](./SECURITY.md) · [🤝 Contributing](./CONTRIBUTING.md)
-
-<br />
-
-<img src="docs/images/hero.png" alt="AnveGuard landing page — the control layer between your app and every AI model" width="90%" />
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue)](LICENSE)
+[![Deno](https://img.shields.io/badge/Deno-2.x-000?logo=deno&logoColor=white)](guard/deno.json)
+[![Docker](https://img.shields.io/badge/Docker-one%20compose%20file-2496ed?logo=docker&logoColor=white)](guard/compose.yml)
+[![APIs](https://img.shields.io/badge/APIs-OpenAI%20%C2%B7%20Anthropic-555)](#what-it-scans)
+[![Mode](https://img.shields.io/badge/Default-flag%20only-e07a3f)](#configuration)
 
 </div>
 
 ---
 
-## Why AnveGuard
+## Why this exists
 
-Most teams ship LLM features with **no record** of what was sent, what came back, or who could change the rules. AnveGuard slots in front of any LLM in 60 seconds and gives you the operational layer that's missing.
+An AI agent with a shell does what it is told — and it is told things by
+more than its user. A web page it summarises, a file it opens, the result of
+a tool it called: all of it lands in the same conversation, and a sentence
+hidden in any of it can turn *"summarise this"* into *"send ~/.ssh to
+webhook.site"*. The agent does not need to be broken for that. It only needs
+to be obliging.
 
-<table>
-  <tr>
-    <td width="33%" valign="top">
-      <h3>🔍 Full audit log</h3>
-      Every prompt, response, token count, latency, model, status code, and admin action — searchable and exportable.
-    </td>
-    <td width="33%" valign="top">
-      <h3>🧱 Layered policy engine</h3>
-      Normalizer → patterns → heuristics → intent classifier. Block, flag, or sanitize before bytes leave your network.
-    </td>
-    <td width="33%" valign="top">
-      <h3>🧠 Injection &amp; jailbreak detection</h3>
-      Battle-tested detectors for prompt injection, role-hijack, exfiltration, and risk-trio combos.
-    </td>
-  </tr>
-  <tr>
-    <td valign="top">
-      <h3>🔁 Multi-provider routing</h3>
-      Fallback chains across OpenAI, Anthropic, Google, Perplexity, and custom OpenAI-compatible endpoints.
-    </td>
-    <td valign="top">
-      <h3>🏷️ Per-key model aliases</h3>
-      Map <code>fast</code>, <code>cheap</code>, <code>smart</code> to whichever upstream model you want — swap providers without redeploying.
-    </td>
-    <td valign="top">
-      <h3>📈 Token-spike alerts</h3>
-      Calibratable severity scoring catches runaway costs and abusive keys before they hit the bill.
-    </td>
-  </tr>
-  <tr>
-    <td valign="top">
-      <h3>🔐 Zero plaintext secrets</h3>
-      AnveGuard keys SHA-256 hashed, upstream provider keys AES-GCM encrypted at rest.
-    </td>
-    <td valign="top">
-      <h3>⚡ &lt;5 ms overhead</h3>
-      Streaming responses are relayed without buffering. Your users won't notice the proxy is there.
-    </td>
-    <td valign="top">
-      <h3>🧰 Drop-in</h3>
-      Change one base URL. No SDK upgrades, no wrappers, no application changes.
-    </td>
-  </tr>
-</table>
+The agent's host sees the consequence — a process that reads keys and opens
+a connection. It does not see the cause. **dlprevent-guard** sits where the
+cause passes: between the agent and its model. Every request and every
+answer goes through it, and it reports what does not belong there:
 
-<div align="center">
-  <img src="docs/images/product.png" alt="Inspect, enforce, audit — the three product pillars shown on the AnveGuard landing page" width="92%" />
-  <br /><sub><i>Inspect &middot; Enforce &middot; Audit — the three pillars, in one console.</i></sub>
-</div>
+- **Prompt injection** in the user's message — and, more to the point, in
+  every **tool result**, where it actually arrives.
+- **Secrets and personal data** on their way to the model provider.
+- **Commands that carry data out** in the model's answer: uploads to
+  data-drop services, credential files, reverse shells, downloads piped into
+  a shell, data hidden in an image link.
 
----
+Findings go to [DLPrevent](https://github.com/dlprevent-dev/dlprevent),
+which shows them as alerts next to what it sees on the host: which tool call
+the agent made, for which user, and which files it was refused.
 
-## What's detected
+**And what it is not.** A guard in front of the model sees text. It does not
+see the machine, and an agent that is told to do harm in words it has never
+seen before will not be caught by a rule written for words it has. It is
+one layer; the host-side DLPrevent agent is the other.
 
-AnveGuard ships **38 named injection patterns**, **16 statistical detectors**, and **9 channel-aware XPIA / indirect-injection rules** out of the box — 63 distinct detection rules. Every one has unit tests in [`policy_engine_attacks.test.ts`](./supabase/functions/_shared/policy_engine_attacks.test.ts) (130+ passing).
+## How it fits
 
-| Family | Coverage |
-|---|---|
-| **Direct prompt injection** | `ignore_prior_instructions`, `new_instructions_override`, `instructions_above_are_fake`, `role_reset`, `repeat_text_above`, `verbatim_initial_prompt`, `begin_with_system_prompt` |
-| **Persona jailbreaks** | DAN, AIM, BetterDAN, STAN, DUDE, Mongo Tom, Evil Confidant, Machiavelli, UCAR, EvilBOT, ChadGPT, Sydney 2.0, DAN 10+, plus generic `act_as_unrestricted` / `pretend_no_restrictions` / `you_are_now_persona` / `two_responses_jailbreak` |
-| **Narrative misdirection** | Fictional / hypothetical / academic framing combined with harmful subjects, grandma trope, deceased-relative variants. Active *and* passive voice ("explains how X is synthesized") |
-| **Refusal suppression** | `refusal_suppression`, `answer_regardless`, `no_warnings_disclaimers`, `force_compliance_prefix` ("start your response with 'Sure'") |
-| **Authority impersonation** | False "I'm from OpenAI/Anthropic's safety team", `policy_was_updated` ("the new policy now allows X") |
-| **Skeleton Key** (Microsoft 2024) | `skeleton_key_update` + `skeleton_key_prefix_warning` composite |
-| **Many-shot jailbreak** (Anthropic 2024) | Detects role-marker alternations (`Human:`/`Assistant:` etc) embedded in single user messages — the MSJ signature |
-| **Unicode smuggling** | Tag-character (CVE-2025-32711), zero-width, variation selectors, **homoglyph** (Cyrillic а / Greek ο masquerading as Latin) |
-| **Cipher attacks** | ROT13/Caesar/Atbash mention + decode-and-execute, leetspeak density, Morse, Pig Latin |
-| **Adversarial suffix** | GCG / AutoDAN-Turbo / BEAST trailing-garbage signatures (bracket clusters, mid-word case changes, gibberish tokens) |
-| **Chain-of-thought extraction** | `<thinking>` / `<scratchpad>` reasoning leak probes (o1/Claude extended thinking) |
-| **Pseudo role tags** | Fake `[system]`, `<\|im_start\|>`, `[INST]` chat-template tokens injected into user content |
-| **System-role JSON** | `{"role":"system","content":"..."}` pasted in user content |
-| **Encoded smuggling** | Base64, hex, URL-encoded payload density (`encoded_density`); explicit decode-and-execute framing |
-| **Output guards** | `output_pii_leak` (email, phone, SSN, credit-card, IP), `output_repetition` (Carlini divergence attack), `system_prompt_leak` (verbatim system-prompt slices), `tool_injection` (fabricated tool_calls JSON), `credential_shape` (sk-proj-, ag_live_, ghp_, AIza, stripe live/test, JWT, RSA private keys) |
-| **XPIA / indirect** | New `evaluateRetrieved()` scanner — 9 channel-aware detectors for RAG chunks, MCP tool results, scraped HTML, email: instruction-override, imperative-to-model, markdown image exfil (EchoLeak), hidden HTML, HTML-comment injection, cross-tool reference (shadowing), SQL-write in NL→SQL context (Vanna.AI CVE-2024-5565), dangerous Python in code-gen retrieval (Langflow CVE-2025-3248), tag-char smuggling. Wired into the proxy's tool-result path. |
-| **Multi-turn behavioral** | Gradual priming ("boil the frog"), trust-building, instruction-churn, persona-loading across turns |
-| **Risk-trio rule** | Co-occurrence of (untrusted_input × outbound_channel × privileged_context) — the agentic exfiltration shape that matches the 2025 Supabase/Cursor/MCP-breach pattern |
-| **PII detection** | Email, US phone, SSN, credit cards (with Luhn validation), IPv4/IPv6, OpenAI/Anthropic/AnveGuard keys, JWT — block/sanitize/flag configurable per workspace |
-
-Plus a layered **multilingual** keyword engine (fuzzy match + edit distance + semantic match) and a configurable intent classifier (LLM-backed, with shadow mode for low-friction rollout).
-
-**Mapped to standards:** OWASP LLM Top 10 (2025), OWASP Agentic Top 10, OWASP MCP Top 10. CVE coverage includes CVE-2025-32711 (EchoLeak), CVE-2024-5565 (Vanna.AI), CVE-2025-3248 (Langflow), CVE-2024-7042 (LangChain).
-
----
-
-## The pipeline — every request, every stage
-
-> Prompt injection isn't the real problem. The real problem is what the model can **do** after compromise.
-
-One pipeline runs in front of every model and every tool call. Each stage is independently configurable — and independently auditable.
-
-```text
-        ┌────────────────────────────┐
-        │        User input          │  from your app or agent
-        └─────────────┬──────────────┘
-                      ▼
-        ┌────────────────────────────┐
-        │      Prompt scanner        │  injection · PII · keyword · regex
-        └─────────────┬──────────────┘
-                      ▼
-        ┌────────────────────────────┐
-        │      Policy engine         │  per-key rules · intents · severity
-        └─────────────┬──────────────┘
-                      ▼
-        ╔════════════════════════════╗
-        ║  Tool permission layer     ║  shell · fs · net · sql · MCP
-        ║   ← most teams skip this   ║
-        ╚═════════════┬══════════════╝
-                      ▼
-        ┌────────────────────────────┐
-        │            LLM             │  OpenAI · Anthropic · Google · custom
-        └─────────────┬──────────────┘
-                      ▼
-        ┌────────────────────────────┐
-        │      Output scanner        │  leak detection · response policy
-        └─────────────┬──────────────┘
-                      ▼
-        ┌────────────────────────────┐
-        │    Audit + telemetry       │  immutable log · alerts · webhooks
-        └────────────────────────────┘
 ```
-
----
-
-## Threat scenarios — real attack paths, real blast radius
-
-Detectors don't sell. Incidents do. Here's how AnveGuard interrupts three attack chains your team is already exposed to — most of which never touch a "prompt injection" classifier.
-
-### 1. Indirect prompt injection via GitHub issue
-**Blast radius:** Repo secrets · CI tokens · production credentials
-
-```text
-GitHub issue contains hidden instructions
-        ↓
-Agent reads repository + .env secrets
-        ↓
-MCP tool executes privileged action
-        ↓
-Data exfiltrated to attacker domain
-        ↓
-✅ AnveGuard blocks tool call · policy violation
-```
-
-### 2. Customer-data exfiltration through a chat agent
-**Blast radius:** PII · payment tokens · support transcripts
-
-```text
-User pastes "summarize this and email it"
-        ↓
-Agent queries internal CRM via tool
-        ↓
-Model attempts outbound HTTP to unknown domain
-        ↓
-✅ AnveGuard denies — domain not on egress allowlist
-```
-
-### 3. Compromised model invokes destructive shell
-**Blast radius:** Filesystem · DB rows · billing systems
-
-```text
-Jailbreak bypasses model safety
-        ↓
-Model calls shell.exec("rm -rf /data")
-        ↓
-✅ Tool permission layer rejects · shell capability not granted
-        ↓
-✅ Audit log captures attempt + actor + payload
-```
-
----
-
-## Tool governance — policy-controlled tool execution
-
-Filters and detectors stop a fraction of the attack surface. The durable control is governing **what an agent is allowed to do** — which shells, which paths, which domains, which rows. AnveGuard treats every tool call (function call, MCP capability, shell command) as a permissioned action with its own allowlist, audit row, and override workflow.
-
-| Capability | What you can govern |
-|---|---|
-| **Shell & code execution** | Allowlist commands, deny by default, capture every invocation with arguments |
-| **Filesystem** | Scope agents to specific paths, block writes outside a sandbox, deny secret reads |
-| **Outbound domains** | Per-key egress allowlist — block exfiltration to unknown hosts before the request leaves |
-| **SQL & data access** | Read-only roles, row-level scoping, refuse DDL and bulk `SELECT` from agent contexts |
-| **GitHub & MCP** | Capability scoping for MCP servers — list which tools each key may invoke |
-| **Privileged actions** | Require step-up approval for destructive ops: deletes, transfers, role grants |
-
-This is where the market is moving. Prompt detection commoditizes; **runtime telemetry, policy orchestration, and execution governance** are the durable moat.
-
----
-
-
-## Architecture
-
-```text
-┌────────────┐  ag_live_*   ┌──────────────┐  provider key   ┌────────────┐
-│  Your app  │ ───────────► │  AnveGuard   │ ──────────────► │  OpenAI    │
-│ (any SDK)  │              │    proxy     │                 │  Anthropic │
-└────────────┘              └──────┬───────┘                 │  Gemini    │
-                                   │                         │  Perplexity│
-                                   ▼                         │  Custom    │
-                          policy · routing · logs            └────────────┘
+ user ──► agent (Hermes) ──► dlprevent-guard :8787 ──► model provider
                                    │
-                                   ▼
-                        ┌─────────────────────┐
-                        │  Postgres (RLS)     │ ◄── React dashboard
-                        │  request_logs, etc. │     (Clerk auth)
-                        └─────────────────────┘
+                                   └─ findings (metadata only) ─► /var/log/dlprevent-guard/verdicts.jsonl
+                                                                        │
+                                                   DLPrevent Linux agent ┴─► dashboard alert
 ```
 
-<div align="center">
-  <img src="docs/images/concepts.png" alt="AnveGuard Concepts docs — five primitives (endpoint, key, alias, route, policy)" width="92%" />
-  <br /><sub><i>Five primitives. Once these click, the rest of the docs read fast.</i></sub>
-</div>
+- **One container**, no database, no dashboard, no account. It stores no
+  prompt and no answer; a finding carries rule names and reasons, never the
+  text they were found in.
+- **Talks to nothing but your provider.** Everything it needs is fetched when
+  the image is built.
+- **Flag mode by default**: forward everything, report findings. Block mode
+  answers a refused request with a 403 in the API shape the agent expects.
 
-| Edge function | Auth | Purpose |
-| --- | --- | --- |
-| [`proxy`](supabase/functions/proxy) | `Bearer ag_live_*` | OpenAI-compatible public endpoint, runs policy layers, forwards upstream, logs every call |
-| [`dashboard`](supabase/functions/dashboard) | Clerk JWT | Action router for the React app: CRUD on keys, endpoints, policies, logs, routes |
-| [`alerts-fire`](supabase/functions/alerts-fire) | cron | Evaluates anomaly rules every minute and emits webhooks |
+## What it scans
 
-Shared modules live in [`supabase/functions/_shared`](supabase/functions/_shared): `policy_engine.ts`, `anveguard.ts` (key auth + AES-GCM + Clerk JWT verify), `providers.ts`, `anthropic.ts`, `system_prompt.ts`, `compress.ts`.
+For every request, only what is **new** since the model last answered — the
+user's turn and the tool results — so a finding is reported once, not on
+every later turn. Then the model's answer, including the tool calls it asks
+for, streamed or not.
 
----
+| Direction | Checked for | By |
+|---|---|---|
+| user's message | prompt injection, jailbreak patterns and heuristics, personal data and secrets, known attack signatures | AnveGuard engine |
+| tool result | instructions hidden in data (override phrases, imperatives aimed at the model, hidden HTML, poisoned-authority claims), injection, personal data and secrets, known signatures | AnveGuard engine — without its prompt heuristics, which mistake hashes, base64 and code for attacks |
+| model's answer | secrets and personal data, links to private addresses, markdown-image exfiltration, data-drop services, credential files, file uploads, reverse shells, piping into a shell | AnveGuard engine + [`guard/agent_rules.ts`](guard/agent_rules.ts) |
 
-## Quickstart — proxy your first request in 60 seconds
+Supported APIs: OpenAI chat completions (`/v1/chat/completions`) and
+Anthropic messages (`/v1/messages`). Everything else passes through
+unscanned.
 
-```python
-from openai import OpenAI
+## Deploy
 
-client = OpenAI(
-    api_key="ag_live_…",                       # your AnveGuard key
-    base_url="https://anveguard.app/v1",       # the only line that changes
-)
-
-resp = client.chat.completions.create(
-    model="gpt-4o-mini",
-    messages=[{"role": "user", "content": "Hello"}],
-)
-```
-
-Every request now appears in the dashboard with status, latency, tokens, payloads, and policy verdicts.
-
-<div align="center">
-  <img src="docs/images/quickstart.png" alt="AnveGuard Quickstart docs page showing how to mint a key and point your SDK at the proxy" width="92%" />
-  <br /><sub><i>The in-app Quickstart — three minutes from <code>npm install</code> to your first proxied request.</i></sub>
-</div>
-
----
-
-## Screenshots
-
-A short tour of the surfaces you actually live in:
-
-### Observe & audit every call
-
-<table>
-  <tr>
-    <td width="50%" align="center">
-      <a href="docs/images/logs-audit.png"><img src="docs/images/logs-audit.png" alt="Logs &amp; audit — every proxied call written with status, model, provider, latency, tokens, block reason, and full payloads" /></a>
-      <br /><sub><b>Logs &amp; audit</b> — one row per request <i>and</i> one row per admin action. Status, model, provider, latency, tokens, block reason, full payloads — all queryable.</sub>
-    </td>
-    <td width="50%" align="center">
-      <a href="docs/images/observability.png"><img src="docs/images/observability.png" alt="Observability — token-spike alerts with calibratable severity score" /></a>
-      <br /><sub><b>Token-spike alerts</b> — scored 0–100 against a rolling baseline, with configurable thresholds, dampening, and email notifications.</sub>
-    </td>
-  </tr>
-</table>
-
-### Configure the rules that fire
-
-<table>
-  <tr>
-    <td width="50%" align="center">
-      <a href="docs/images/rules-config.png"><img src="docs/images/rules-config.png" alt="Rule configuration — blocked keywords, allowlist overrides, evaluation flow, sandbox preview, and alert tuning" /></a>
-      <br /><sub><b>Rule configuration</b> — blocked + allowed keywords, custom block messages, the exact evaluation flow, and a sandbox to test before you ship.</sub>
-    </td>
-    <td width="50%" align="center">
-      <a href="docs/images/policies.png"><img src="docs/images/policies.png" alt="Policies docs — keyword guardrails on input and output with allowlist overrides" /></a>
-      <br /><sub><b>Guardrails in action</b> — keyword rules evaluated on input <i>and</i> output, with allowlist overrides and start-permissive-then-tighten tuning.</sub>
-    </td>
-  </tr>
-</table>
-
-### Predictable, OpenAI-shaped error responses
-
-<table>
-  <tr>
-    <td width="50%" align="center">
-      <a href="docs/images/errors-reference.png"><img src="docs/images/errors-reference.png" alt="Errors reference — full table of HTTP codes, error codes, when each fires, and retry guidance" /></a>
-      <br /><sub><b>Error responses</b> — full code table (<code>blocked_input</code>, <code>blocked_output</code>, <code>invalid_api_key</code>, <code>upstream_rate_limited</code>, <code>upstream_timeout</code>…) with explicit retry guidance.</sub>
-    </td>
-    <td width="50%" align="center">
-      <a href="docs/images/errors.png"><img src="docs/images/errors.png" alt="OpenAI-shaped error body — identical to the OpenAI SDK error shape so existing handlers keep working" /></a>
-      <br /><sub><b>Drop-in error shape</b> — every error body matches OpenAI's, so existing <code>try/except</code> blocks and SDK error handlers keep working unchanged.</sub>
-    </td>
-  </tr>
-</table>
-
-### Providers, transport, and the rest
-
-<table>
-  <tr>
-    <td width="50%" align="center">
-      <a href="docs/images/endpoints-docs.png"><img src="docs/images/endpoints-docs.png" alt="Endpoints &amp; providers — supported provider kinds (OpenAI, Anthropic, Google, OpenAI-compatible)" /></a>
-      <br /><sub><b>Endpoints &amp; providers</b> — OpenAI, Anthropic, Google, and any OpenAI-compatible upstream.</sub>
-    </td>
-    <td width="50%" align="center">
-      <a href="docs/images/proxy-api.png"><img src="docs/images/proxy-api.png" alt="Proxy API reference — strict subset of the OpenAI REST API" /></a>
-      <br /><sub><b>Proxy API</b> — a strict subset of the OpenAI REST API. No SDK changes.</sub>
-    </td>
-  </tr>
-</table>
-
----
-
-## Discoverability — SEO & AI agents
-
-AnveGuard is built to be found by both humans and machines.
-
-**Search engines (SEO)**
-- Per-page `<title>` / meta description / canonical / OpenGraph via the shared [`<Seo>`](src/components/seo.tsx) helper
-- Structured data (JSON-LD) for `Organization`, `WebSite`, `FAQPage` on the landing and `/docs/faq` route, and `TechArticle` on every `/docs/*` page
-- `public/sitemap.xml` and `public/robots.txt` with explicit `Allow` for major crawlers
-
-**AI agents (AEO)**
-- `public/llms.txt` + `public/llms-full.txt` — concise and full-corpus summaries for LLM crawlers (Anthropic, OpenAI, Perplexity, Google-Extended)
-- `public/.well-known/llms.txt`, `public/ai.txt`, `public/ai-context.json` — discoverability metadata
-- `public/.well-known/ai-plugin.json` — OpenAI plugin manifest
-- `public/.well-known/agent-card.json` — A2A / agent-card descriptor
-
----
-
-## Stack
-
-- **Frontend:** Vite · React 18 · TypeScript · Tailwind · shadcn/Radix · TanStack Query · react-hook-form + zod · React Router 6
-- **Auth:** [Clerk](https://clerk.com) — with a custom themed appearance ([`src/lib/clerk-appearance.ts`](src/lib/clerk-appearance.ts)) so SignIn/SignUp match the operator-console dark theme
-- **Backend:** [Supabase](https://supabase.com) — Postgres + Deno Edge Functions
-- **Tests:** Vitest (unit) · Deno (edge functions) · Playwright (e2e)
-
-
----
-
-## Local development
-
-### Prerequisites
-
-- Node **22.x**
-- A free [Supabase](https://supabase.com) project
-- A free [Clerk](https://clerk.com) application
-- [Deno](https://deno.com) CLI (for edge-function tests)
-
-### Setup
+On the agent's host:
 
 ```bash
-git clone https://github.com/ANVE-AI/prompt-sentinel-flow.git
-cd prompt-sentinel-flow
-npm ci
-cp .env.example .env        # fill in VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY, VITE_SUPABASE_PROJECT_ID
-npm run dev                 # http://localhost:8080
+git clone https://github.com/dlprevent-dev/dlprevent-guard.git
+cd dlprevent-guard/guard
+echo "GUARD_UPSTREAM=https://api.deepseek.com" > .env     # your provider's base URL, without /v1
+docker compose up -d --build
+curl -s localhost:8787/healthz                             # ok
 ```
 
-Edge-function secrets (`SUPABASE_SERVICE_ROLE_KEY`, `KEY_ENCRYPTION_SECRET`, `CLERK_JWKS_URL`, provider keys) belong in your **Supabase project**, not in `.env`.
+Then give the agent `http://127.0.0.1:8787/v1` as its API base URL instead of
+the provider's.
 
-### Quality gates
+**If the agent sends no key** — Hermes treats a `127.0.0.1` address as a local
+model server and sends `no-key-required` — put the provider key into `.env`
+as `GUARD_UPSTREAM_KEY` and keep the file at `chmod 600`. The first log line
+then ends in `key set by the guard`.
+
+The complete setup with Hermes and DLPrevent, including hardening the agent
+itself: [DLPrevent → docs/HERMES.md](https://github.com/dlprevent-dev/dlprevent/blob/main/docs/HERMES.md).
+
+## Configuration
+
+All in `guard/.env`, read when the container starts.
+
+| Variable | Default | |
+|---|---|---|
+| `GUARD_UPSTREAM` | — | The provider's base URL, without `/v1`. |
+| `GUARD_UPSTREAM_KEY` | — | The provider key, set on every forwarded request. Unset: the agent's key passes through. |
+| `GUARD_MODE` | `flag` | `flag`: forward everything, report findings. `block`: refuse a request whose verdict is `block` with a 403. A streamed answer is always forwarded and reported afterwards. |
+| `GUARD_POLICY` | — | Path to a JSON file overriding engine settings (`PolicySettings` in [`policy_engine.ts`](supabase/functions/_shared/policy_engine.ts)), mounted into the container; e.g. `{"pii_action": "sanitize"}` masks personal data and secrets before they reach the provider. |
+| `GUARD_PORT` | `8787` | Host port, bound to `127.0.0.1` only. |
+
+The container runs read-only, with no capabilities and no privilege
+escalation; the only writable path is the verdict log.
+
+## What you see
+
+`docker compose logs guard` — one line per request, and one per finding:
+
+```
+POST /v1/chat/completions -> 200 912ms (key)
+guard: tool_result block forwarded ignore_prior_instructions,retrieved_instruction_override
+```
+
+`(key)` / `(no key)` says whether the agent sent a key, never which. The
+findings, one JSON line each, in `/var/log/dlprevent-guard/verdicts.jsonl`:
+
+```json
+{"at":"2026-09-24T11:15:05.127Z","direction":"input","verdict":"block","action":"forwarded",
+ "model":"deepseek-v4-flash","chars":32,"layers":[{"layer":"injection","rule":"ignore_prior_instructions",
+ "verdict":"block","reason":"Attempt to override prior system or developer instructions."}]}
+```
+
+The most specific rule comes first: that is the reason the DLPrevent
+dashboard shows.
+
+## Develop
 
 ```bash
-npm run lint          # ESLint
-npm run typecheck     # tsc --noEmit
-npm test              # Vitest unit tests
-npm run build         # Production build
-npm run e2e           # Playwright (needs e2e/.env.e2e — see e2e/README.md)
-
-# Edge functions
-cd supabase/functions
-deno test --allow-env --allow-net --no-check
+cd guard
+deno task test          # 13 tests: extraction, agent rules, end to end against a fake provider
 ```
 
-CI runs all of the above on every push and PR — see [`.github/workflows/ci.yml`](./.github/workflows/ci.yml).
-
-### Database
-
-29 forward-only migrations live in [`supabase/migrations`](supabase/migrations).
+Upstream updates to the engine:
 
 ```bash
-supabase link --project-ref <your-project-ref>
-supabase db push
+git remote add upstream https://github.com/ANVE-AI/prompt-sentinel-flow.git   # once
+git pull upstream main
 ```
 
-Key tables: `profiles`, `api_keys`, `endpoints`, `request_logs`, `policy_settings`, `policy_rules`, `policy_intents`, `routes`, `audit_logs`, `key_behavior_profiles`. RLS is **enabled on every table**; the service role is the only accessor and all access goes through audited edge functions.
+The guard only adds files under `guard/`, `NOTICE`, this README and one logo;
+upstream's own files are unchanged, so their updates merge. The one file both
+sides touch is `README.md` — upstream's lives on as
+[`README.upstream.md`](README.upstream.md); on a conflict, keep this one and
+carry their changes over there.
 
----
+## Credits and license
 
-## Deploying
+The detection engine — everything under
+[`supabase/functions/_shared/`](supabase/functions/_shared) and the rest of
+the upstream tree — is **AnveGuard** by
+[ANVE-AI](https://github.com/ANVE-AI/prompt-sentinel-flow), unmodified,
+under the [Apache License 2.0](LICENSE). Its patterns, heuristics, tool-result
+scanner, PII detection and threat-intelligence feed do the actual work here;
+their tests are in `policy_engine_attacks.test.ts`.
 
-```bash
-supabase functions deploy proxy dashboard alerts-fire
-supabase db push
-```
+This fork adds the proxy (`guard/server.ts`), the agent rules
+(`guard/agent_rules.ts`), the container and compose files, and this README —
+also under Apache 2.0, as listed in [NOTICE](NOTICE). It is not affiliated
+with or endorsed by ANVE-AI, and "AnveGuard" is their name, used here only to
+say where the engine comes from.
 
-The frontend is a plain Vite SPA — deploy the `dist/` output to any static host (Vercel, Netlify, Cloudflare Pages, S3 + CloudFront, etc.).
-
----
-
-## Security model (one-page summary)
-
-AnveGuard is multi-tenant. Isolation depends on three layers:
-
-1. **Auth at the edge.** `proxy` validates `Bearer ag_live_*` against `api_keys` (SHA-256 hash compare). `dashboard` validates a Clerk JWT via JWKS.
-2. **Application-level row scoping.** Every read in `dashboard/index.ts` filters by the authenticated `clerk_user_id`; CI grep-checks guard against missing `.eq("user_id", …)` clauses.
-3. **RLS as defense in depth.** Every table denies `anon`/`authenticated`; only the service role can read or write.
-
-**Secrets:** AnveGuard keys are SHA-256 hashed (never plaintext after creation). Upstream provider keys are AES-GCM encrypted with a key derived from `KEY_ENCRYPTION_SECRET`.
-
-Found a vulnerability? See [`SECURITY.md`](./SECURITY.md) — please don't open a public issue.
-
----
-
-## Roadmap
-
-- [ ] Per-workspace key derivation for upstream credentials
-- [ ] Metadata-only logging mode by default
-- [ ] Self-hostable Docker distribution
-- [ ] Spend caps & per-key budgets
-- [ ] Streaming-aware output classification
-- [ ] More built-in policy templates (PII, PCI, HIPAA, GDPR)
-
-Track progress in [GitHub Issues](../../issues) and grab anything tagged `good-first-issue`.
-
----
-
-## Contributing
-
-PRs are very welcome — see [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the workflow, commit style, and pre-commit checklist. The active hardening roadmap is in the audit plan (issues `C1-C5`, `H1-H11`, `M1-M11`); pick an unclaimed item and reference its ID in your PR.
-
-By participating you agree to be a decent human. Disagree with ideas, not people.
-
----
-
-## Documentation
-
-<div align="center">
-  <img src="docs/images/docs.png" alt="AnveGuard in-app documentation" width="90%" />
-  <br /><sub><i>The in-app docs — Overview, Concepts, Guides, and a full API reference.</i></sub>
-</div>
-
-<br />
-
-In-app docs live at [`/docs/*`](src/pages/docs):
-
-| Introduction | Guides | Reference |
-| --- | --- | --- |
-| [Overview](src/pages/docs/Overview.tsx) | [API Keys](src/pages/docs/ApiKeys.tsx) | [Proxy API](src/pages/docs/ProxyApi.tsx) |
-| [Quickstart](src/pages/docs/Quickstart.tsx) | [Endpoints](src/pages/docs/Endpoints.tsx) | [Logs](src/pages/docs/Logs.tsx) |
-| [Concepts](src/pages/docs/Concepts.tsx) | [Routes](src/pages/docs/Routes.tsx) | [Errors](src/pages/docs/Errors.tsx) |
-|  | [Policies](src/pages/docs/Policies.tsx) | [FAQ](src/pages/docs/Faq.tsx) |
-
-For maintainers: [`SECURITY.md`](./SECURITY.md), [`CONTRIBUTING.md`](./CONTRIBUTING.md).
-
----
-
-## License
-
-[Apache 2.0](./LICENSE) — Copyright 2026 ANVE AI and AnveGuard contributors.
-
-If AnveGuard saves you from a leaky prompt, an exploded token bill, or a 3am incident — drop us a ⭐ on GitHub. It's the cheapest way to support the project.
+DLPrevent itself is a separate project under its own license
+([PolyForm Noncommercial 1.0.0](https://github.com/dlprevent-dev/dlprevent/blob/main/LICENSE));
+this repository does not include any of it. Contact: info@dlprevent.ch.
