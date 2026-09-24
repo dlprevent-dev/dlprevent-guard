@@ -357,7 +357,9 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
     // is for: of six ordinary ones, three came back as an imperative to the
     // model. Only the <IMPORTANT>…</IMPORTANT> form of it stays a finding;
     // the poisoned descriptions tried were caught by other rules as well.
-    if (def && !IMPORTANT_TAG.test(p.text)) found = found.filter((l) => l.rule !== "retrieved_imperative_to_model");
+    // A tool result is no different: a web page on babies and screens said
+    // "you should turn the TV off" to its reader and was refused.
+    if (!IMPORTANT_TAG.test(p.text)) found = found.filter((l) => l.rule !== "retrieved_imperative_to_model");
     layers.push(...found);
   }
   return { verdict: layers.length ? aggregate(layers, settings) : r.verdict, layers };
