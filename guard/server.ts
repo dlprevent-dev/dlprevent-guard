@@ -122,6 +122,10 @@ function newSlots(body: Json): { piece: Piece; set: (text: string) => void }[] {
       break;
     }
   }
+  // A subagent's task is what the model wrote into delegate_task, scanned
+  // already as that model's answer. Nobody typed it.
+  const system = textOf(body.system) || textOf(messages.find((m) => m?.role === "system")?.content);
+  const child = system.startsWith(SUBAGENT);
   const out: { piece: Piece; set: (text: string) => void }[] = [];
   for (const m of messages.slice(start)) {
     if (m.role === "tool") {
@@ -132,43 +136,73 @@ function newSlots(body: Json): { piece: Piece; set: (text: string) => void }[] {
           if (part?.type === "tool_result") {
             out.push({ piece: { direction: "tool_result", text: textOf(part.content), origin: str(part.tool_use_id) }, set: (t) => (part.content = t) });
           } else if (typeof part?.text === "string") {
-            out.push(...userSlots(part.text, (t) => (part.text = t)));
+            out.push(...userSlots(part.text, (t) => (part.text = t), child));
           }
         }
       } else {
-        out.push(...userSlots(textOf(m.content), (t) => (m.content = t)));
+        out.push(...userSlots(textOf(m.content), (t) => (m.content = t), child));
       }
     }
   }
   return out.filter((s) => s.piece.text.trim().length > 0);
 }
 
-/** What Hermes's memory hook appends to a user message. */
-const MEMORY = /(<memory-context>[\s\S]*?<\/memory-context>)/;
+/** What Hermes puts into a user message besides what the person typed: the
+ *  recalled memory its memory hook appends, a skill's body up to the
+ *  instruction that goes with it, a cron job's script output. */
+const DATA = new RegExp(
+  "(<memory-context>[\\s\\S]*?</memory-context>" +
+    '|\\[IMPORTANT: The user has invoked the "[^"\\n]+" skill[\\s\\S]*?(?=\\nThe user has provided the following instruction alongside the skill invocation: |$)' +
+    "|## Script (?:Output|Error)\\n[^\\n]*\\n\\n```\\n[\\s\\S]*?\\n```)",
+);
+
+const originOf = (block: string) =>
+  block.startsWith("<memory-context>") ? "memory-context" : block.startsWith("## Script") ? "cron-script" : `skill:${block.match(/"([^"]+)"/)?.[1]}`;
+
+/** Hermes's context compression: the old turns, sent back as one user
+ *  message, each behind a label of its own (agent/context_compressor.py). */
+const COMPACTION = "You are a summarization agent creating a context checkpoint.";
+const TURN_LABEL = /(^|\n)\[(?:[A-Z_]+|TOOL RESULT [^\]\n]*)\]:/g;
+
+/** How Hermes opens a subagent's system prompt (tools/delegate_tool_progress.py). */
+const SUBAGENT = "You are a focused subagent working on a specific delegated task.";
+
+/** How Hermes opens a cron job's prompt (cron/scheduler_prompt.py). */
+const CRON = "[IMPORTANT: You are running as a scheduled cron job.";
 
 /**
- * A user message, split into what the person typed and the recalled memory
- * Hermes appends to it. The memory is data, like a tool result: its IDs,
- * `--- head ---` markers and CamelCase names made a one-line question come
- * back as `adversarial_suffix`. A poisoned memory stays an injection finding.
+ * A user message, split into what the person typed and what Hermes adds to
+ * it. What Hermes adds is data, like a tool result: recalled memory's IDs
+ * and `--- head ---` markers, a skill's HTML template, a script's hashes all
+ * came back as `adversarial_suffix`, and a compaction's `[ASSISTANT]:`
+ * labels as `pseudo_role_tag`. A poisoned one stays an injection finding.
  */
-function userSlots(text: string, write: (text: string) => void): { piece: Piece; set: (text: string) => void }[] {
-  // Odd indices are the memory blocks, even ones what the person typed.
-  const parts = text.split(MEMORY);
+function userSlots(text: string, write: (text: string) => void, child = false): { piece: Piece; set: (text: string) => void }[] {
+  if (text.startsWith(COMPACTION)) {
+    // Scanned without the labels; everything in it was scanned when it was new.
+    return [{ piece: { direction: "tool_result", text: text.replace(TURN_LABEL, "$1"), origin: "compaction" }, set: write }];
+  }
+  // Odd indices are Hermes's blocks, even ones what the person typed.
+  const parts = text.split(DATA);
   const put = (i: number, t: string) => {
     parts[i] = t;
     write(parts.join(""));
   };
   const typed = parts.filter((_, i) => i % 2 === 0).join("");
+  // In a cron run nobody typed anything: what is left is the job's prompt,
+  // stored when the job was made. In a subagent it is the task its parent
+  // wrote. The briefing's shell line, its placeholders and table came back as
+  // `adversarial_suffix`, in the job and in its reviewer, every day.
+  const from = typed.includes(CRON) ? "cron-job" : child ? "delegate_task" : undefined;
   const out: { piece: Piece; set: (text: string) => void }[] = [{
-    piece: { direction: "input", text: typed },
+    piece: from ? { direction: "tool_result", text: typed, origin: from } : { direction: "input", text: typed },
     set: (t: string) => {
       for (let i = 2; i < parts.length; i += 2) parts[i] = "";
       put(0, t);
     },
   }];
   for (let i = 1; i < parts.length; i += 2) {
-    out.push({ piece: { direction: "tool_result", text: parts[i], origin: "memory-context" }, set: (t) => put(i, t) });
+    out.push({ piece: { direction: "tool_result", text: parts[i], origin: originOf(parts[i]) }, set: (t) => put(i, t) });
   }
   return out;
 }
@@ -332,8 +366,14 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
   };
   if (p.direction === "output") {
     const r = await evaluate({ ...base, text: p.text, direction: "output" }, { model: ctx.model, responseToolNames: ctx.tools });
+    // An agent on a server talks to 127.0.0.1, localhost and its Docker
+    // network all day; upstream blocks every private address it names, and
+    // "check the service on 127.0.0.1:8080" was refused. Reported, not
+    // refused — except the cloud metadata address, where a hijacked agent
+    // picks up the machine's credentials.
+    const own = r.layers.map((l) => l.rule === "egress_private_ip" && !METADATA.test(l.matched ?? "") ? { ...l, verdict: "flag" as Verdict } : l);
     // What the agent is about to do: upstream judges text, not commands.
-    const layers = [...r.layers, ...evaluateAgentActions(p.text, p.calls ?? "")];
+    const layers = [...own, ...evaluateAgentActions(p.text, p.calls ?? "")];
     return { verdict: layers.length ? aggregate(layers, settings) : r.verdict, layers };
   }
   // A tool result is data, not a prompt. Upstream's heuristics look for
@@ -350,7 +390,14 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
   const def = p.direction === "tool_definition";
   const s = tool ? { ...settings, enable_heuristics: false, enable_behavioral: false, ...(def ? { enable_pii_detection: false } : {}) } : settings;
   const r = await evaluate({ ...base, settings: s, text: p.text, direction: "input" }, { model: ctx.model });
-  const layers = [...r.layers];
+  // "may not delete memory entries", "delete the context folder": in data,
+  // housekeeping on memory and context, not an order to forget instructions.
+  // "ASX 200 closes higher in Sydney" was refused as a jailbreak persona. A
+  // city, a first name, a word in capitals: when that is all the persona
+  // rule found, it found none. "DAN 11.0", "BetterDAN" still count.
+  const only = (l: LayerVerdict, rule: string, re: RegExp) => l.rule === rule && l.spans?.every((s) => re.test(s.match.trim()));
+  const kept = r.layers.filter((l) => !only(l, "modern_jailbreak_persona", ORDINARY_NAME) && !(tool && only(l, "ignore_prior_instructions", HOUSEKEEPING)));
+  const layers = [...kept];
   if (tool) {
     let found = evaluateRetrieved(p.text, { kind: def ? "mcp_tool_desc" : "mcp_tool_result", origin: p.origin, consumer: "tool_router" });
     // "You must read a file before editing it" is what a tool description
@@ -362,10 +409,17 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
     if (!IMPORTANT_TAG.test(p.text)) found = found.filter((l) => l.rule !== "retrieved_imperative_to_model");
     layers.push(...found);
   }
-  return { verdict: layers.length ? aggregate(layers, settings) : r.verdict, layers };
+  // The verdict is the kept layers': upstream's counts what was filtered out.
+  return { verdict: layers.length || tool || kept.length < r.layers.length ? aggregate(layers, settings) : r.verdict, layers };
 }
 
-const IMPORTANT_TAG = /<\s*(important|system|sys|admin|internal|note)\s*>[\s\S]{20,}<\s*\/\s*\1\s*>/i;
+const METADATA = /^(?:169\.254\.|fd00:ec2::254$|metadata\.google\.internal$)/i;
+
+const ORDINARY_NAME = /^(?:Sydney|STAN|DUDE|Cody|Machiavelli)$/;
+
+const HOUSEKEEPING = /^(?:delete|drop|erase|wipe|skip|override)\b[\s\S]*\b(?:context|memory)$/i;
+
+const IMPORTANT_TAG =/<\s*(important|system|sys|admin|internal|note)\s*>[\s\S]{20,}<\s*\/\s*\1\s*>/i;
 
 /** Which layer's reason an alert should lead with. The reader sees the
  *  first reason only, and upstream lists the vaguest first: "ignore all
@@ -427,6 +481,10 @@ export interface Config {
    *  from before there were routes, `/v1/…` straight to one provider. */
   fallback?: Upstream;
   mode: Mode;
+  /** In block mode, only report what the user typed, never refuse it
+   *  (`GUARD_TRUST_USER`). For an agent only its owner talks to: the owner
+   *  is not who the guard is for, what reaches the agent from outside is. */
+  trustUser?: boolean;
   log: string;
   settings: PolicySettings;
 }
@@ -544,7 +602,7 @@ export function handler(cfg: Config, write: (r: Record) => Promise<void>) {
         }
         const { verdict, layers } = await scan(p, cfg.settings, { model });
         if (verdict === "allow") continue;
-        const block = cfg.mode === "block" && verdict === "block";
+        const block = cfg.mode === "block" && verdict === "block" && !(cfg.trustUser && p.direction === "input");
         const rec = record(p, verdict, layers, block, model, to.name);
         await write(rec);
         if (!block) continue;
@@ -673,6 +731,7 @@ if (import.meta.main) {
     routes,
     fallback,
     mode,
+    trustUser: Deno.env.get("GUARD_TRUST_USER") === "1",
     log: Deno.env.get("GUARD_LOG") ?? "/var/log/dlprevent-guard/verdicts.jsonl",
     settings: await loadSettings(Deno.env.get("GUARD_POLICY")),
   };
@@ -682,7 +741,7 @@ if (import.meta.main) {
   };
   const port = Number(Deno.env.get("GUARD_PORT") ?? "8787");
   const keyOf = (u: Upstream) => (u.key ? "key set by the guard" : "key from the agent");
-  console.log(`dlprevent-guard on :${port}, mode ${mode}, log ${cfg.log}`);
+  console.log(`dlprevent-guard on :${port}, mode ${mode}${cfg.trustUser ? ", user trusted" : ""}, log ${cfg.log}`);
   if (fallback) console.log(`  /v1/…  -> ${fallback.url}, ${keyOf(fallback)}`);
   for (const [n, u] of Object.entries(routes)) console.log(`  /${n}/…  -> ${u.url}, ${keyOf(u)}`);
   const handle = handler(cfg, write);
