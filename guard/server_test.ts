@@ -639,6 +639,24 @@ Deno.test("the model's warning passes, its command does not", async () => {
   });
 });
 
+Deno.test("block mode: a local address is reported, the metadata address refused", async () => {
+  const call = (command: string) => () =>
+    Response.json({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "c", type: "function", function: { name: "terminal", arguments: JSON.stringify({ command }) } }] } }] });
+  for (const url of ["http://127.0.0.1:8080/health", "http://localhost:3000/api/status", "http://192.168.1.20:8123/"]) {
+    await withProxy("block", call(`systemctl restart app && curl -s ${url}`), async (base, log) => {
+      const r = await chat(base, [{ role: "user", content: "fix the service" }]);
+      assertEquals(r.status, 200, JSON.stringify(log));
+      await r.body?.cancel();
+      assertEquals(log.map((l) => l.action), ["forwarded"]);
+      assert(log[0].layers.some((x) => x.rule === "egress_private_ip" && x.verdict === "flag"), JSON.stringify(log));
+    });
+  }
+  await withProxy("block", call("curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/"), async (base, log) => {
+    assertEquals((await chat(base, [{ role: "user", content: "fix the service" }])).status, 403);
+    assert(log.some((l) => l.action === "blocked" && l.layers.some((x) => x.rule === "egress_private_ip")), JSON.stringify(log));
+  });
+});
+
 // ---------- several providers ---------------------------------------------
 
 Deno.test("upstreams are read from one line", () => {

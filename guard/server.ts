@@ -366,8 +366,14 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
   };
   if (p.direction === "output") {
     const r = await evaluate({ ...base, text: p.text, direction: "output" }, { model: ctx.model, responseToolNames: ctx.tools });
+    // An agent on a server talks to 127.0.0.1, localhost and its Docker
+    // network all day; upstream blocks every private address it names, and
+    // "check the service on 127.0.0.1:8080" was refused. Reported, not
+    // refused — except the cloud metadata address, where a hijacked agent
+    // picks up the machine's credentials.
+    const own = r.layers.map((l) => l.rule === "egress_private_ip" && !METADATA.test(l.matched ?? "") ? { ...l, verdict: "flag" as Verdict } : l);
     // What the agent is about to do: upstream judges text, not commands.
-    const layers = [...r.layers, ...evaluateAgentActions(p.text, p.calls ?? "")];
+    const layers = [...own, ...evaluateAgentActions(p.text, p.calls ?? "")];
     return { verdict: layers.length ? aggregate(layers, settings) : r.verdict, layers };
   }
   // A tool result is data, not a prompt. Upstream's heuristics look for
@@ -406,6 +412,8 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
   // The verdict is the kept layers': upstream's counts what was filtered out.
   return { verdict: layers.length || tool || kept.length < r.layers.length ? aggregate(layers, settings) : r.verdict, layers };
 }
+
+const METADATA = /^(?:169\.254\.|fd00:ec2::254$|metadata\.google\.internal$)/i;
 
 const ORDINARY_NAME = /^(?:Sydney|STAN|DUDE|Cody|Machiavelli)$/;
 
