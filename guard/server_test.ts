@@ -123,14 +123,14 @@ Deno.test("ordinary agent work passes", () => {
 
 // ---------- end to end against a fake provider ----------------------------
 
-async function withProxy(mode: "flag" | "block", upstream: (req: Request) => Response | Promise<Response>, run: (base: string, log: Record[], hits: () => number) => Promise<void>, key?: string) {
+async function withProxy(mode: "flag" | "block", upstream: (req: Request) => Response | Promise<Response>, run: (base: string, log: Record[], hits: () => number) => Promise<void>, key?: string, trustUser = false) {
   let n = 0;
   const up = Deno.serve({ port: 0, onListen() {} }, (req) => {
     n++;
     return upstream(req);
   });
   const log: Record[] = [];
-  const cfg: Config = { routes: {}, fallback: { url: `http://127.0.0.1:${up.addr.port}`, key }, mode, log: "", settings: GUARD_SETTINGS };
+  const cfg: Config = { routes: {}, fallback: { url: `http://127.0.0.1:${up.addr.port}`, key }, mode, trustUser, log: "", settings: GUARD_SETTINGS };
   const guard = Deno.serve({ port: 0, onListen() {} }, handler(cfg, async (r) => void log.push(r)));
   try {
     await run(`http://127.0.0.1:${guard.addr.port}`, log, () => n);
@@ -202,6 +202,17 @@ Deno.test("block mode: the next turn goes through, the refused content stays out
     assert(seen[0].includes("what happened?"), seen[0]);
     assertEquals(log.filter((l) => l.action === "blocked").length, 1, "one refusal, one alert");
   });
+});
+
+Deno.test("GUARD_TRUST_USER: what the user typed is reported, not refused; the rest still is", async () => {
+  await withProxy("block", ok, async (base, log, hits) => {
+    const r = await chat(base, [{ role: "user", content: INJECTION }]);
+    assertEquals(r.status, 200, JSON.stringify(log));
+    await r.body?.cancel();
+    assertEquals(hits(), 1);
+    assertEquals(log.map((l) => [l.direction, l.action]), [["input", "forwarded"]]);
+    assertEquals((await chat(base, poisoned)).status, 403, "a poisoned tool result");
+  }, undefined, true);
 });
 
 Deno.test("an ordinary conversation leaves no trace", async () => {

@@ -200,6 +200,7 @@ All in `guard/.env`, read when the container starts.
 | `GUARD_UPSTREAMS` | — | More providers, `name=url,name=url`, each under `/<name>/…`. At least one of this and `GUARD_UPSTREAM` is needed. |
 | `GUARD_KEY_<NAME>` | — | The key for route `<name>` (upper case, `-` as `_`). |
 | `GUARD_MODE` | `flag` | `flag`: forward everything, report findings. `block`: refuse a request whose verdict is `block` with a 403, and withhold that content when it comes again. A streamed answer is held until it has ended and then passed on or refused; in flag mode it streams through. |
+| `GUARD_TRUST_USER` | — | `1`: in block mode, what the user typed is reported but never refused. For an agent only its owner can talk to (Hermes's platform allowlist): the owner is not the threat, what reaches the agent from outside is. Tool results, memory, skills, cron jobs, subagent tasks and the agent's own commands are still refused. |
 | `GUARD_POLICY` | — | Path to a JSON file overriding engine settings (`PolicySettings` in [`policy_engine.ts`](supabase/functions/_shared/policy_engine.ts)), mounted into the container; e.g. `{"pii_action": "sanitize"}` masks personal data and secrets before they reach the provider. `{"enable_tool_governance": true, "tool_denylist": ["send_email"]}` makes a call to a listed tool a `block` finding; `tool_allowlist` does the same for every tool not listed. |
 | `GUARD_PORT` | `8787` | Host port, bound to `127.0.0.1` only. |
 

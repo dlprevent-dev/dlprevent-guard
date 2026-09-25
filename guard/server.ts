@@ -473,6 +473,10 @@ export interface Config {
    *  from before there were routes, `/v1/…` straight to one provider. */
   fallback?: Upstream;
   mode: Mode;
+  /** In block mode, only report what the user typed, never refuse it
+   *  (`GUARD_TRUST_USER`). For an agent only its owner talks to: the owner
+   *  is not who the guard is for, what reaches the agent from outside is. */
+  trustUser?: boolean;
   log: string;
   settings: PolicySettings;
 }
@@ -590,7 +594,7 @@ export function handler(cfg: Config, write: (r: Record) => Promise<void>) {
         }
         const { verdict, layers } = await scan(p, cfg.settings, { model });
         if (verdict === "allow") continue;
-        const block = cfg.mode === "block" && verdict === "block";
+        const block = cfg.mode === "block" && verdict === "block" && !(cfg.trustUser && p.direction === "input");
         const rec = record(p, verdict, layers, block, model, to.name);
         await write(rec);
         if (!block) continue;
@@ -719,6 +723,7 @@ if (import.meta.main) {
     routes,
     fallback,
     mode,
+    trustUser: Deno.env.get("GUARD_TRUST_USER") === "1",
     log: Deno.env.get("GUARD_LOG") ?? "/var/log/dlprevent-guard/verdicts.jsonl",
     settings: await loadSettings(Deno.env.get("GUARD_POLICY")),
   };
@@ -728,7 +733,7 @@ if (import.meta.main) {
   };
   const port = Number(Deno.env.get("GUARD_PORT") ?? "8787");
   const keyOf = (u: Upstream) => (u.key ? "key set by the guard" : "key from the agent");
-  console.log(`dlprevent-guard on :${port}, mode ${mode}, log ${cfg.log}`);
+  console.log(`dlprevent-guard on :${port}, mode ${mode}${cfg.trustUser ? ", user trusted" : ""}, log ${cfg.log}`);
   if (fallback) console.log(`  /v1/…  -> ${fallback.url}, ${keyOf(fallback)}`);
   for (const [n, u] of Object.entries(routes)) console.log(`  /${n}/…  -> ${u.url}, ${keyOf(u)}`);
   const handle = handler(cfg, write);
