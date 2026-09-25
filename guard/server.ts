@@ -143,18 +143,37 @@ function newSlots(body: Json): { piece: Piece; set: (text: string) => void }[] {
   return out.filter((s) => s.piece.text.trim().length > 0);
 }
 
-/** What Hermes's memory hook appends to a user message. */
-const MEMORY = /(<memory-context>[\s\S]*?<\/memory-context>)/;
+/** What Hermes puts into a user message besides what the person typed: the
+ *  recalled memory its memory hook appends, a skill's body up to the
+ *  instruction that goes with it, a cron job's script output. */
+const DATA = new RegExp(
+  "(<memory-context>[\\s\\S]*?</memory-context>" +
+    '|\\[IMPORTANT: The user has invoked the "[^"\\n]+" skill[\\s\\S]*?(?=\\nThe user has provided the following instruction alongside the skill invocation: |$)' +
+    "|## Script (?:Output|Error)\\n[^\\n]*\\n\\n```\\n[\\s\\S]*?\\n```)",
+);
+
+const originOf = (block: string) =>
+  block.startsWith("<memory-context>") ? "memory-context" : block.startsWith("## Script") ? "cron-script" : `skill:${block.match(/"([^"]+)"/)?.[1]}`;
+
+/** Hermes's context compression: the old turns, sent back as one user
+ *  message, each behind a label of its own (agent/context_compressor.py). */
+const COMPACTION = "You are a summarization agent creating a context checkpoint.";
+const TURN_LABEL = /(^|\n)\[(?:[A-Z_]+|TOOL RESULT [^\]\n]*)\]:/g;
 
 /**
- * A user message, split into what the person typed and the recalled memory
- * Hermes appends to it. The memory is data, like a tool result: its IDs,
- * `--- head ---` markers and CamelCase names made a one-line question come
- * back as `adversarial_suffix`. A poisoned memory stays an injection finding.
+ * A user message, split into what the person typed and what Hermes adds to
+ * it. What Hermes adds is data, like a tool result: recalled memory's IDs
+ * and `--- head ---` markers, a skill's HTML template, a script's hashes all
+ * came back as `adversarial_suffix`, and a compaction's `[ASSISTANT]:`
+ * labels as `pseudo_role_tag`. A poisoned one stays an injection finding.
  */
 function userSlots(text: string, write: (text: string) => void): { piece: Piece; set: (text: string) => void }[] {
-  // Odd indices are the memory blocks, even ones what the person typed.
-  const parts = text.split(MEMORY);
+  if (text.startsWith(COMPACTION)) {
+    // Scanned without the labels; everything in it was scanned when it was new.
+    return [{ piece: { direction: "tool_result", text: text.replace(TURN_LABEL, "$1"), origin: "compaction" }, set: write }];
+  }
+  // Odd indices are Hermes's blocks, even ones what the person typed.
+  const parts = text.split(DATA);
   const put = (i: number, t: string) => {
     parts[i] = t;
     write(parts.join(""));
@@ -168,7 +187,7 @@ function userSlots(text: string, write: (text: string) => void): { piece: Piece;
     },
   }];
   for (let i = 1; i < parts.length; i += 2) {
-    out.push({ piece: { direction: "tool_result", text: parts[i], origin: "memory-context" }, set: (t) => put(i, t) });
+    out.push({ piece: { direction: "tool_result", text: parts[i], origin: originOf(parts[i]) }, set: (t) => put(i, t) });
   }
   return out;
 }
@@ -350,7 +369,9 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
   const def = p.direction === "tool_definition";
   const s = tool ? { ...settings, enable_heuristics: false, enable_behavioral: false, ...(def ? { enable_pii_detection: false } : {}) } : settings;
   const r = await evaluate({ ...base, settings: s, text: p.text, direction: "input" }, { model: ctx.model });
-  const layers = [...r.layers];
+  // "may not delete memory entries", "delete the context folder": in data,
+  // housekeeping on memory and context, not an order to forget instructions.
+  const layers = tool ? r.layers.filter((l) => !(l.rule === "ignore_prior_instructions" && l.spans?.every((s) => HOUSEKEEPING.test(s.match)))) : [...r.layers];
   if (tool) {
     let found = evaluateRetrieved(p.text, { kind: def ? "mcp_tool_desc" : "mcp_tool_result", origin: p.origin, consumer: "tool_router" });
     // "You must read a file before editing it" is what a tool description
@@ -362,10 +383,13 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
     if (!IMPORTANT_TAG.test(p.text)) found = found.filter((l) => l.rule !== "retrieved_imperative_to_model");
     layers.push(...found);
   }
-  return { verdict: layers.length ? aggregate(layers, settings) : r.verdict, layers };
+  // Data's verdict is its own layers': upstream's counts what was filtered out.
+  return { verdict: layers.length || tool ? aggregate(layers, settings) : r.verdict, layers };
 }
 
-const IMPORTANT_TAG = /<\s*(important|system|sys|admin|internal|note)\s*>[\s\S]{20,}<\s*\/\s*\1\s*>/i;
+const HOUSEKEEPING = /^(?:delete|drop|erase|wipe|skip|override)\b[\s\S]*\b(?:context|memory)$/i;
+
+const IMPORTANT_TAG =/<\s*(important|system|sys|admin|internal|note)\s*>[\s\S]{20,}<\s*\/\s*\1\s*>/i;
 
 /** Which layer's reason an alert should lead with. The reader sees the
  *  first reason only, and upstream lists the vaguest first: "ignore all
