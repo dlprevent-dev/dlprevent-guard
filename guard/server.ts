@@ -160,6 +160,9 @@ const originOf = (block: string) =>
 const COMPACTION = "You are a summarization agent creating a context checkpoint.";
 const TURN_LABEL = /(^|\n)\[(?:[A-Z_]+|TOOL RESULT [^\]\n]*)\]:/g;
 
+/** How Hermes opens a cron job's prompt (cron/scheduler_prompt.py). */
+const CRON = "[IMPORTANT: You are running as a scheduled cron job.";
+
 /**
  * A user message, split into what the person typed and what Hermes adds to
  * it. What Hermes adds is data, like a tool result: recalled memory's IDs
@@ -179,8 +182,12 @@ function userSlots(text: string, write: (text: string) => void): { piece: Piece;
     write(parts.join(""));
   };
   const typed = parts.filter((_, i) => i % 2 === 0).join("");
+  // In a cron run nobody typed anything: what is left is the job's prompt,
+  // stored when the job was made. The briefing's shell line, its placeholders
+  // and table came back as `adversarial_suffix` and the job failed every day.
+  const cron = typed.includes(CRON);
   const out: { piece: Piece; set: (text: string) => void }[] = [{
-    piece: { direction: "input", text: typed },
+    piece: cron ? { direction: "tool_result", text: typed, origin: "cron-job" } : { direction: "input", text: typed },
     set: (t: string) => {
       for (let i = 2; i < parts.length; i += 2) parts[i] = "";
       put(0, t);

@@ -253,7 +253,7 @@ Deno.test("block mode: a poisoned memory is refused like a poisoned tool result"
  *  the skill body, then the job's prompt with the output of its script. The
  *  daily briefing's HTML template came back `adversarial_suffix` and the job
  *  failed with a 403. */
-const withSkill = (skill: string, output = "") => `[IMPORTANT: The user has invoked the "daily-briefing-html-template" skill, indicating they want you to follow its instructions. The full skill content is loaded below.]
+const withSkill = (skill: string, output = "", job = "Erstelle das tägliche Aktien-Briefing.") => `[IMPORTANT: The user has invoked the "daily-briefing-html-template" skill, indicating they want you to follow its instructions. The full skill content is loaded below.]
 
 ---
 name: daily-briefing-html-template
@@ -283,7 +283,7 @@ The following data was collected by a pre-run script. Use it as context for your
 ${output}
 \`\`\`
 
-Erstelle das tägliche Aktien-Briefing.`;
+${job}`;
 
 const scanOutput = `PORT     STATE SERVICE  VERSION
 443/tcp  open  https    nginx 1.24.0
@@ -306,6 +306,42 @@ Deno.test("block mode: a poisoned skill or script output is refused like a poiso
       assertEquals((await chat(base, [{ role: "user", content: withSkill(skill, output) }])).status, 403);
       assertEquals(hits(), 0);
       assertEquals(log.find((l) => l.action === "blocked")?.origin, origin);
+    });
+  }
+});
+
+/** The briefing job's own prompt, stored in cron/jobs.json: a shell line, the
+ *  template's placeholders and a table row. As the user's prompt it came back
+ *  `adversarial_suffix` and the job was refused every weekday. */
+const briefingJob = `Du erstellst das taegliche Aktien-Briefing fuer me@example.ch als HTML-Email.
+SCHRITT 3: Template befuellen — alle {{PLATZHALTER}} ersetzen
+<tr><td>Ticker (Name)</td><td>Preis Waehrung</td><td>Tages-%</td><td>G/V %</td><td>Abstand Stop</td><td>Signal-Badge</td></tr>
+SCHRITT 5: Footer 'Powered by DeepSeek V4 Pro', keine Platzhalter '{{' mehr. EBAY | eBay (NASDAQ) | 104,00 USD
+SCHRITT 6: (echo "To: me@example.ch"; echo "From: me@example.ch"; echo "Subject: Aktien-Briefing - $(date +%d.%m.%Y)"; cat /tmp/briefing.html) | msmtp -f me@example.ch me@example.ch`;
+
+const cronHint = "[IMPORTANT: You are running as a scheduled cron job. DELIVERY: Your final response will be automatically delivered to the user.]\n\n";
+
+Deno.test("a cron job's prompt is the job's, not a person's", async () => {
+  const as = await scan({ direction: "input", text: briefingJob }, GUARD_SETTINGS);
+  assert(as.layers.some((l) => l.rule === "adversarial_suffix"), "the case this is about");
+  for (const content of [withSkill("", "", briefingJob), cronHint + briefingJob]) {
+    await withProxy("block", ok, async (base, log, hits) => {
+      const r = await chat(base, [{ role: "user", content }]);
+      assertEquals(r.status, 200, JSON.stringify(log));
+      await r.body?.cancel();
+      assertEquals(hits(), 1);
+      // Its addresses are still reported.
+      assertEquals(log.map((l) => [l.origin, l.action, l.layers.map((x) => x.rule)]), [["cron-job", "forwarded", ["pii_detection"]]]);
+    });
+  }
+});
+
+Deno.test("block mode: a poisoned cron job is refused", async () => {
+  for (const content of [withSkill("", "", INJECTION), cronHint + INJECTION]) {
+    await withProxy("block", ok, async (base, log, hits) => {
+      assertEquals((await chat(base, [{ role: "user", content }])).status, 403);
+      assertEquals(hits(), 0);
+      assertEquals(log.find((l) => l.action === "blocked")?.origin, "cron-job");
     });
   }
 });
