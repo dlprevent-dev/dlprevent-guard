@@ -122,6 +122,10 @@ function newSlots(body: Json): { piece: Piece; set: (text: string) => void }[] {
       break;
     }
   }
+  // A subagent's task is what the model wrote into delegate_task, scanned
+  // already as that model's answer. Nobody typed it.
+  const system = textOf(body.system) || textOf(messages.find((m) => m?.role === "system")?.content);
+  const child = system.startsWith(SUBAGENT);
   const out: { piece: Piece; set: (text: string) => void }[] = [];
   for (const m of messages.slice(start)) {
     if (m.role === "tool") {
@@ -132,11 +136,11 @@ function newSlots(body: Json): { piece: Piece; set: (text: string) => void }[] {
           if (part?.type === "tool_result") {
             out.push({ piece: { direction: "tool_result", text: textOf(part.content), origin: str(part.tool_use_id) }, set: (t) => (part.content = t) });
           } else if (typeof part?.text === "string") {
-            out.push(...userSlots(part.text, (t) => (part.text = t)));
+            out.push(...userSlots(part.text, (t) => (part.text = t), child));
           }
         }
       } else {
-        out.push(...userSlots(textOf(m.content), (t) => (m.content = t)));
+        out.push(...userSlots(textOf(m.content), (t) => (m.content = t), child));
       }
     }
   }
@@ -160,6 +164,9 @@ const originOf = (block: string) =>
 const COMPACTION = "You are a summarization agent creating a context checkpoint.";
 const TURN_LABEL = /(^|\n)\[(?:[A-Z_]+|TOOL RESULT [^\]\n]*)\]:/g;
 
+/** How Hermes opens a subagent's system prompt (tools/delegate_tool_progress.py). */
+const SUBAGENT = "You are a focused subagent working on a specific delegated task.";
+
 /** How Hermes opens a cron job's prompt (cron/scheduler_prompt.py). */
 const CRON = "[IMPORTANT: You are running as a scheduled cron job.";
 
@@ -170,7 +177,7 @@ const CRON = "[IMPORTANT: You are running as a scheduled cron job.";
  * came back as `adversarial_suffix`, and a compaction's `[ASSISTANT]:`
  * labels as `pseudo_role_tag`. A poisoned one stays an injection finding.
  */
-function userSlots(text: string, write: (text: string) => void): { piece: Piece; set: (text: string) => void }[] {
+function userSlots(text: string, write: (text: string) => void, child = false): { piece: Piece; set: (text: string) => void }[] {
   if (text.startsWith(COMPACTION)) {
     // Scanned without the labels; everything in it was scanned when it was new.
     return [{ piece: { direction: "tool_result", text: text.replace(TURN_LABEL, "$1"), origin: "compaction" }, set: write }];
@@ -183,11 +190,12 @@ function userSlots(text: string, write: (text: string) => void): { piece: Piece;
   };
   const typed = parts.filter((_, i) => i % 2 === 0).join("");
   // In a cron run nobody typed anything: what is left is the job's prompt,
-  // stored when the job was made. The briefing's shell line, its placeholders
-  // and table came back as `adversarial_suffix` and the job failed every day.
-  const cron = typed.includes(CRON);
+  // stored when the job was made. In a subagent it is the task its parent
+  // wrote. The briefing's shell line, its placeholders and table came back as
+  // `adversarial_suffix`, in the job and in its reviewer, every day.
+  const from = typed.includes(CRON) ? "cron-job" : child ? "delegate_task" : undefined;
   const out: { piece: Piece; set: (text: string) => void }[] = [{
-    piece: cron ? { direction: "tool_result", text: typed, origin: "cron-job" } : { direction: "input", text: typed },
+    piece: from ? { direction: "tool_result", text: typed, origin: from } : { direction: "input", text: typed },
     set: (t: string) => {
       for (let i = 2; i < parts.length; i += 2) parts[i] = "";
       put(0, t);

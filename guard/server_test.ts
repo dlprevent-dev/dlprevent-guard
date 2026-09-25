@@ -346,6 +346,36 @@ Deno.test("block mode: a poisoned cron job is refused", async () => {
   }
 });
 
+/** The briefing's reviewer, as Hermes starts it (tools/delegate_tool_progress.py):
+ *  the task the job's model wrote into delegate_task becomes the subagent's
+ *  first user message. Scanned as a person's prompt it was `adversarial_suffix`. */
+const subagent = "You are a focused subagent working on a specific delegated task.\n\nCONTEXT:\nDas HTML liegt unter /tmp/briefing.html.";
+const reviewGoal = `Du bist der QUALITAETS-REVIEWER fuer ein Aktien-Briefing. Nutze web_search und/oder terminal (python3 mit Yahoo v8 API: curl -s 'https://query1.finance.yahoo.com/v8/finance/chart/TICKER?range=5d&interval=1d' -H 'User-Agent: Mozilla/5.0').
+1. Alle 4 Portfolio-Preise: LOGN.SW, TCOM, F, EBAY — vergleiche mit Yahoo v8 API. Toleranz +/-2%.
+2. VIX: Yahoo ^VIX
+5. TEMPLATE-TREUE: Footer 'Powered by DeepSeek V4 Pro', keine Platzhalter '{{' mehr im HTML.
+Lies das HTML: cat /tmp/briefing.html
+GIB ZURUECK: Pro Datenpunkt: Report-Wert | Live-Wert | Quelle | Match (ja/nein, Toleranz +/-2%)`;
+
+Deno.test("a subagent's task is its parent's, not a person's", async () => {
+  const as = await scan({ direction: "input", text: reviewGoal }, GUARD_SETTINGS);
+  assert(as.layers.some((l) => l.rule === "adversarial_suffix"), "the case this is about");
+  for (const [goal, status, origin] of [[reviewGoal, 200, undefined], [INJECTION, 403, "delegate_task"]] as const) {
+    await withProxy("block", ok, async (base, log, hits) => {
+      const r = await chat(base, [{ role: "system", content: subagent }, { role: "user", content: goal }]);
+      assertEquals(r.status, status, JSON.stringify(log));
+      await r.body?.cancel();
+      assertEquals(hits(), status === 200 ? 1 : 0);
+      assertEquals(log.find((l) => l.action === "blocked")?.origin, origin);
+    });
+  }
+  // Anthropic carries the system prompt beside the messages.
+  const pieces = newPieces({ system: subagent, messages: [{ role: "user", content: reviewGoal }] });
+  assertEquals(pieces.map((p) => [p.direction, p.origin]), [["tool_result", "delegate_task"]]);
+  // Hermes's own system prompt leaves the user's turn a prompt.
+  assertEquals(newPieces({ messages: [{ role: "system", content: "You are Hermes." }, { role: "user", content: reviewGoal }] })[0].direction, "input");
+});
+
 /** Hermes's context compression (agent/context_compressor.py): old turns go
  *  back to the model as one user message, each labelled `[ASSISTANT]:`,
  *  `[TOOL RESULT <id>]:` — which `pseudo_role_tag` took for a smuggled role
