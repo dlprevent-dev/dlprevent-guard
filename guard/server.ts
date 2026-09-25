@@ -378,7 +378,12 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
   const r = await evaluate({ ...base, settings: s, text: p.text, direction: "input" }, { model: ctx.model });
   // "may not delete memory entries", "delete the context folder": in data,
   // housekeeping on memory and context, not an order to forget instructions.
-  const layers = tool ? r.layers.filter((l) => !(l.rule === "ignore_prior_instructions" && l.spans?.every((s) => HOUSEKEEPING.test(s.match)))) : [...r.layers];
+  // "ASX 200 closes higher in Sydney" was refused as a jailbreak persona. A
+  // city, a first name, a word in capitals: when that is all the persona
+  // rule found, it found none. "DAN 11.0", "BetterDAN" still count.
+  const only = (l: LayerVerdict, rule: string, re: RegExp) => l.rule === rule && l.spans?.every((s) => re.test(s.match.trim()));
+  const kept = r.layers.filter((l) => !only(l, "modern_jailbreak_persona", ORDINARY_NAME) && !(tool && only(l, "ignore_prior_instructions", HOUSEKEEPING)));
+  const layers = [...kept];
   if (tool) {
     let found = evaluateRetrieved(p.text, { kind: def ? "mcp_tool_desc" : "mcp_tool_result", origin: p.origin, consumer: "tool_router" });
     // "You must read a file before editing it" is what a tool description
@@ -390,9 +395,11 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
     if (!IMPORTANT_TAG.test(p.text)) found = found.filter((l) => l.rule !== "retrieved_imperative_to_model");
     layers.push(...found);
   }
-  // Data's verdict is its own layers': upstream's counts what was filtered out.
-  return { verdict: layers.length || tool ? aggregate(layers, settings) : r.verdict, layers };
+  // The verdict is the kept layers': upstream's counts what was filtered out.
+  return { verdict: layers.length || tool || kept.length < r.layers.length ? aggregate(layers, settings) : r.verdict, layers };
 }
+
+const ORDINARY_NAME = /^(?:Sydney|STAN|DUDE|Cody|Machiavelli)$/;
 
 const HOUSEKEEPING = /^(?:delete|drop|erase|wipe|skip|override)\b[\s\S]*\b(?:context|memory)$/i;
 
