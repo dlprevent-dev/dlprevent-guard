@@ -407,6 +407,11 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
     // A tool result is no different: a web page on babies and screens said
     // "you should turn the TV off" to its reader and was refused.
     if (!IMPORTANT_TAG.test(p.text)) found = found.filter((l) => l.rule !== "retrieved_imperative_to_model");
+    // A search for running shoes on galaxus.ch was refused: the shop's
+    // product images sit on hosts no allowlist knows. A fixed image URL in a
+    // page carries only what its author already had; it leaks the
+    // conversation only with a placeholder for the model to fill in.
+    if (!TEMPLATED_IMAGE.test(p.text)) found = found.filter((l) => l.rule !== "retrieved_markdown_image_exfil");
     layers.push(...found);
   }
   // The verdict is the kept layers': upstream's counts what was filtered out.
@@ -418,6 +423,8 @@ const METADATA = /^(?:169\.254\.|fd00:ec2::254$|metadata\.google\.internal$)/i;
 const ORDINARY_NAME = /^(?:Sydney|STAN|DUDE|Cody|Machiavelli)$/;
 
 const HOUSEKEEPING = /^(?:delete|drop|erase|wipe|skip|override)\b[\s\S]*\b(?:context|memory)$/i;
+
+const TEMPLATED_IMAGE = /!\[[^\]]*\]\([^)]*(?:\{\{[^}]+\}\}|\$\{[^}]+\}|\[(?:INSERT|DATA|LEAK|CONVERSATION|MESSAGES?|SECRETS?|CONTEXT|HISTORY)[_A-Z]*\])/i;
 
 const IMPORTANT_TAG =/<\s*(important|system|sys|admin|internal|note)\s*>[\s\S]{20,}<\s*\/\s*\1\s*>/i;
 
