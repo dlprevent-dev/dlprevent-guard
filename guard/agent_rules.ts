@@ -110,9 +110,14 @@ const RULES: Rule[] = [
     on: "text",
     layer: "egress",
     verdict: "block",
-    // An image the chat client fetches by itself, with data in its query:
+    // An image the chat client fetches by itself, with data in its URL:
     // the EchoLeak route. Upstream checks this in retrieved content only.
-    re: /!\[[^\]]*\]\(\s*https?:\/\/[^\s)]+\?[^\s)]*(?:\{\{[^}]+\}\}|\$\{[^}]+\}|=[A-Za-z0-9+\/%_-]{40,})[^\s)]*\)/i,
+    // Markdown inline or by reference, or HTML; the data in a query value or
+    // a path segment. A path segment counts when it mixes upper case, lower
+    // case and digits the way encoded data does, and a slug or a hash does not.
+    // ponytail: hex-encoded data in a path passes; an entropy score if it matters.
+    // Case-sensitive for that test, so the tag and scheme spell out both cases.
+    re: /(?:!\[[^\]]*\]\(\s*|^\s*\[[^\]]+\]:\s*|<[iI][mM][gG]\b[^>]*?\b[sS][rR][cC]\s*=\s*["']?)[hH][tT][tT][pP][sS]?:\/\/[^\s)"'>]*?(?:\{\{[^}]+\}\}|\$\{[^}]+\}|=[A-Za-z0-9+\/%_-]{40,}|\/(?=[\w+%=-]*[A-Z])(?=[\w+%=-]*[a-z])(?=[\w+%=-]*\d)[\w+%=-]{40,})/m,
     reason: "Image link that carries data in its URL (markdown exfiltration)",
   },
 ];
