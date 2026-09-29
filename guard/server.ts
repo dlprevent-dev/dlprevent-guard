@@ -273,7 +273,7 @@ export function answerOf(resp: Json): { text: string; calls: string; tools: stri
     for (const tc of (msg.tool_calls as Json[] | undefined) ?? []) {
       const f = tc.function as Json | undefined;
       if (str(f?.name)) tools.push(str(f?.name)!);
-      if (str(f?.arguments)) calls.push(str(f?.arguments)!);
+      if (args(f?.arguments)) calls.push(args(f?.arguments)!);
     }
   }
   for (const block of (Array.isArray(resp.content) ? resp.content : []) as Json[]) {
@@ -290,9 +290,12 @@ export function answerOf(resp: Json): { text: string; calls: string; tools: stri
 /**
  * Collects a streamed answer (server-sent events) chunk by chunk, OpenAI
  * and Anthropic deltas alike, for one scan when the stream is over.
+ * An event may span several `data:` lines (joined with a newline, as the
+ * SSE spec says); data that never parses is scanned as it is, not dropped.
  */
 export class StreamCollector {
   private rest = "";
+  private data: string[] = [];
   private parts: string[] = [];
   private callParts: string[] = [];
   tools: string[] = [];
@@ -304,22 +307,25 @@ export class StreamCollector {
   }
 
   private line(line: string) {
+    if (line === "") return this.end();
     if (!line.startsWith("data:")) return;
-    const data = line.slice(5).trim();
-    if (data === "" || data === "[DONE]") return;
+    this.data.push(line.slice(5).trim());
+    const data = this.data.join("\n");
+    if (data === "" || data === "[DONE]") return void (this.data = []);
     let ev: Json;
     try {
       ev = JSON.parse(data);
     } catch {
-      return;
+      return; // the rest of the event may follow on the next data: line
     }
+    this.data = [];
     const delta = (ev.choices as Json[] | undefined)?.[0]?.delta as Json | undefined;
     if (delta) {
       if (str(delta.content)) this.parts.push(str(delta.content)!);
       for (const tc of (delta.tool_calls as Json[] | undefined) ?? []) {
         const f = tc.function as Json | undefined;
         if (str(f?.name)) this.tools.push(str(f?.name)!);
-        if (str(f?.arguments)) this.call(str(f?.arguments)!);
+        if (args(f?.arguments)) this.call(args(f?.arguments)!);
       }
     }
     const d = ev.delta as Json | undefined;
@@ -336,9 +342,17 @@ export class StreamCollector {
     this.callParts.push(s);
   }
 
+  /** An event that ended without parsing: scanned raw, as a call. */
+  private end() {
+    const data = this.data.join("\n");
+    this.data = [];
+    if (data.trim()) this.call(data);
+  }
+
   text(): string {
     if (this.rest) this.line(this.rest.trim());
     this.rest = "";
+    this.end();
     return this.parts.join("");
   }
 
@@ -350,6 +364,11 @@ export class StreamCollector {
 
 function str(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+
+/** Tool-call arguments: a JSON string, or — from some gateways — an object. */
+function args(v: unknown): string | undefined {
+  return v && typeof v === "object" ? JSON.stringify(v) : str(v);
 }
 
 // ---------- judging -------------------------------------------------------
