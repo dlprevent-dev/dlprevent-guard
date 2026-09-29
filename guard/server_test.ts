@@ -83,6 +83,13 @@ Deno.test("ordinary tool output is not an injection", async () => {
   assert(hit.layers.some((l) => l.rule === "retrieved_instruction_override"), JSON.stringify(hit.layers));
 });
 
+Deno.test("a large dotted tool result is scanned in time", async () => {
+  // 400 KB like this took the guard offline for a minute (PII email pattern).
+  const t = performance.now();
+  await scan({ direction: "tool_result", text: "ab.".repeat(140_000), origin: "web_extract" }, GUARD_SETTINGS);
+  assert(performance.now() - t < 5_000, `${Math.round(performance.now() - t)} ms`);
+});
+
 // ---------- agent actions -------------------------------------------------
 
 /** Rules that fire on a tool call's arguments. */

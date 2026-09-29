@@ -1962,7 +1962,9 @@ export interface PiiMatch {
 
 const PII_PATTERNS: { kind: PiiKind; re: RegExp; postCheck?: (m: string) => boolean }[] = [
   // Email — RFC 5322 subset, conservative.
-  { kind: "email", re: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,24}\b/g },
+  // Starts only where a local part can start: with `\b`, every dot in a long
+  // dotted run was a new start, and 400 KB took a minute (quadratic).
+  { kind: "email", re: /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,24}\b/g },
   // US phone: optional +1, optional parens, hyphens/spaces/dots between groups.
   // Length checks via the regex itself; we additionally require at least one
   // separator OR parens to avoid catching plain 10-digit IDs.
@@ -2011,6 +2013,8 @@ function looksLikeIp(s: string): boolean {
 
 /** Find all PII matches in text. Returns sorted-by-start, non-overlapping. */
 export function detectPII(text: string, kinds?: Set<PiiKind>): PiiMatch[] {
+  // Bounded like every other regex layer (ReDoS).
+  if (text.length > MAX_REGEX_INPUT_LEN) text = text.slice(0, MAX_REGEX_INPUT_LEN);
   const out: PiiMatch[] = [];
   for (const p of PII_PATTERNS) {
     if (kinds && !kinds.has(p.kind)) continue;
