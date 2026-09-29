@@ -65,6 +65,7 @@ export interface Record {
 
 /** A reason can quote what it matched (a blocked keyword). Cut it short. */
 const MAX_REASON = 160;
+const MAX_ORIGIN = 64;
 
 /** What the guard turns on beyond upstream's defaults: DLP on what goes to
  *  the model, and links in what comes back. Both only flag — a DLP hit is
@@ -561,7 +562,8 @@ export function record(p: Piece, verdict: Verdict, layers: LayerVerdict[], block
     action: blocked ? "blocked" : "forwarded",
     upstream,
     model,
-    origin: p.origin,
+    // A tool name comes from whoever wrote the MCP server: a name, not text.
+    origin: p.origin?.replace(/[^\w.:@\/+-]/g, "_").slice(0, MAX_ORIGIN),
     chars: p.text.length,
     // `matched` and `spans` are left out on purpose: they are the text.
     layers: layers
@@ -623,7 +625,12 @@ export function parseUpstreams(line: string | undefined, env: { [k: string]: str
       throw new Error(`GUARD_UPSTREAMS: "${name}" is not a usable route name (letters, digits, - and _; not ${RESERVED.join(", ")})`);
     }
     if (!/^https?:\/\/[^/]/.test(url)) throw new Error(`GUARD_UPSTREAMS: "${url}" for ${name} is not an http(s) URL`);
-    const key = env[`GUARD_KEY_${name.toUpperCase().replace(/-/g, "_")}`];
+    // `a-b` and `a_b` would read the same key variable: one provider's key
+    // would go to the other.
+    const variable = `GUARD_KEY_${name.toUpperCase().replace(/-/g, "_")}`;
+    const twin = Object.keys(out).find((n) => `GUARD_KEY_${n.toUpperCase().replace(/-/g, "_")}` === variable);
+    if (twin) throw new Error(`GUARD_UPSTREAMS: "${twin}" and "${name}" would share ${variable}; name them apart`);
+    const key = env[variable];
     out[name] = key ? { url, key } : { url };
   }
   return out;
@@ -677,7 +684,7 @@ export function handler(cfg: Config, writeLog: (r: Record) => Promise<void>) {
     }
 
     if (req.method !== "POST" || !SCANNED.includes(to.path)) {
-      return relay(await fetch(target, { method: req.method, headers, body: req.body }));
+      return relay(await fetch(target, { method: req.method, headers, body: req.body, redirect: "manual" }));
     }
 
     const raw = await req.text();
@@ -685,7 +692,7 @@ export function handler(cfg: Config, writeLog: (r: Record) => Promise<void>) {
     try {
       body = JSON.parse(raw);
     } catch {
-      return relay(await fetch(target, { method: "POST", headers, body: raw }));
+      return relay(await fetch(target, { method: "POST", headers, body: raw, redirect: "manual" }));
     }
     const model = str(body.model);
 
@@ -744,7 +751,9 @@ export function handler(cfg: Config, writeLog: (r: Record) => Promise<void>) {
     }
     if (blockedBy) return refusal(blockedBy, anthropic);
 
-    const resp = await fetch(target, { method: "POST", headers, body: replaced ? JSON.stringify(body) : raw });
+    // A redirect goes back to the agent as it is: the guard talks to the
+    // configured provider and nowhere else, not to where it points.
+    const resp = await fetch(target, { method: "POST", headers, body: replaced ? JSON.stringify(body) : raw, redirect: "manual" });
     const type = resp.headers.get("content-type") ?? "";
     if (!resp.ok || !resp.body) return relay(resp);
 
@@ -869,15 +878,18 @@ if (import.meta.main) {
     await Deno.writeTextFile(cfg.log, JSON.stringify(r) + "\n", { append: true, create: true });
   };
   const port = Number(Deno.env.get("GUARD_PORT") ?? "8787");
+  // Whoever reaches the guard spends the provider key it carries. The
+  // container sets 0.0.0.0 and publishes the port on 127.0.0.1 only.
+  const hostname = Deno.env.get("GUARD_HOST") ?? "127.0.0.1";
   const keyOf = (u: Upstream) => (u.key ? "key set by the guard" : "key from the agent");
-  console.log(`dlprevent-guard on :${port}, mode ${mode}${cfg.trustUser ? ", user trusted" : ""}, log ${cfg.log}`);
+  console.log(`dlprevent-guard on ${hostname}:${port}, mode ${mode}${cfg.trustUser ? ", user trusted" : ""}, log ${cfg.log}`);
   if (fallback) console.log(`  /v1/…  -> ${fallback.url}, ${keyOf(fallback)}`);
   for (const [n, u] of Object.entries(routes)) console.log(`  /${n}/…  -> ${u.url}, ${keyOf(u)}`);
   const handle = handler(cfg, write);
   // One line per request: whether the agent goes through the guard at all
   // is the first thing anyone asks, and findings alone cannot answer it.
   // Method, path, status and time — no body, no header.
-  Deno.serve({ port, hostname: "0.0.0.0" }, async (req) => {
+  Deno.serve({ port, hostname }, async (req) => {
     const t = performance.now();
     const resp = await handle(req);
     const path = new URL(req.url).pathname;

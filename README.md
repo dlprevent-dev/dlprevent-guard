@@ -63,7 +63,8 @@ one layer; the host-side DLPrevent agent is the other.
 
 - **One container**, no database, no dashboard, no account. It stores no
   prompt and no answer; a finding carries rule names and reasons, never the
-  text they were found in.
+  text they were found in — and the name of the tool it came from, which an
+  MCP server chooses: cut to 64 characters, letters, digits and `_.:@/+-`.
 - **Talks to nothing but your provider.** Everything it needs is fetched when
   the image is built.
 - **Flag mode by default**: forward everything, report findings. Block mode
@@ -110,7 +111,8 @@ It also says which tools the model may call — see [Configuration](#configurati
 
 Supported APIs: OpenAI chat completions (`/v1/chat/completions`) and
 Anthropic messages (`/v1/messages`). Everything else passes through
-unscanned.
+unscanned. A redirect from the provider is passed back to the agent, never
+followed by the guard.
 
 ## Deploy
 
@@ -203,11 +205,12 @@ All in `guard/.env`, read when the container starts.
 | `GUARD_UPSTREAM` | — | Default provider for `/v1/…`: its base URL, without `/v1`. |
 | `GUARD_UPSTREAM_KEY` | — | The default provider's key, set on every forwarded request. Unset: the agent's key passes through. |
 | `GUARD_UPSTREAMS` | — | More providers, `name=url,name=url`, each under `/<name>/…`. At least one of this and `GUARD_UPSTREAM` is needed. |
-| `GUARD_KEY_<NAME>` | — | The key for route `<name>` (upper case, `-` as `_`). |
+| `GUARD_KEY_<NAME>` | — | The key for route `<name>` (upper case, `-` as `_`). Two routes that would share a variable (`a-b`, `a_b`) stop the guard from starting. |
 | `GUARD_MODE` | `flag` | `flag`: forward everything, report findings. `block`: refuse a request whose verdict is `block` with a 403, and withhold that content when it comes again. A streamed answer is held until it has ended and then passed on or refused; in flag mode it streams through. |
 | `GUARD_TRUST_USER` | — | `1`: in block mode, what the user typed is reported but never refused. For an agent only its owner can talk to (Hermes's platform allowlist): the owner is not the threat, what reaches the agent from outside is. Tool results, memory, skills, cron jobs, subagent tasks and the agent's own commands are still refused. |
 | `GUARD_POLICY` | — | Path to a JSON file overriding engine settings (`PolicySettings` in [`policy_engine.ts`](supabase/functions/_shared/policy_engine.ts)), mounted into the container; e.g. `{"pii_action": "sanitize"}` masks personal data and secrets before they reach the provider. `{"enable_tool_governance": true, "tool_denylist": ["send_email"]}` makes a call to a listed tool a `block` finding; `tool_allowlist` does the same for every tool not listed. |
-| `GUARD_PORT` | `8787` | Host port, bound to `127.0.0.1` only. |
+| `GUARD_PORT` | `8787` | Port. `compose.yml` publishes it on the host's `127.0.0.1` only. |
+| `GUARD_HOST` | `127.0.0.1` | Address the process listens on. The container image sets `0.0.0.0` — inside the container, so the port can be published; set it outside Docker only if other hosts are to reach the guard, which carries your provider keys and asks callers for nothing. |
 
 The container runs read-only, with no capabilities and no privilege
 escalation; the only writable path is the verdict log.

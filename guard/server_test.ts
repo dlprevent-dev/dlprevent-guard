@@ -734,6 +734,16 @@ Deno.test("upstreams are read from one line", () => {
   assertEquals(parseUpstreams(undefined, {}), {});
 });
 
+Deno.test("two routes that would share a key variable are refused", () => {
+  let err = "";
+  try {
+    parseUpstreams("a-b=https://one.example,a_b=https://two.example", { GUARD_KEY_A_B: "k" });
+  } catch (e) {
+    err = String(e);
+  }
+  assert(err.includes("GUARD_KEY_A_B"), err);
+});
+
 Deno.test("a route name that would hide an API path is refused", () => {
   for (const bad of ["v1=https://x", "api=https://x", "healthz=https://x", "=https://x", "ok=not-a-url"]) {
     let threw = false;
@@ -878,4 +888,32 @@ Deno.test("block mode: a nested schema or a failing log does not open the gate",
     await guard.shutdown();
     await up.shutdown();
   }
+});
+
+Deno.test("a redirect is passed back, not followed", async () => {
+  let inner = 0;
+  const internal = Deno.serve({ port: 0, onListen() {} }, () => (inner++, new Response("secret")));
+  const upstream = () => new Response(null, { status: 302, headers: { location: `http://127.0.0.1:${internal.addr.port}/latest/meta-data/` } });
+  try {
+    await withProxy("flag", upstream, async (base) => {
+      const r = await fetch(`${base}/v1/chat/completions`, { method: "POST", redirect: "manual", body: JSON.stringify({ messages: [{ role: "user", content: "hi" }] }) });
+      assertEquals(r.status, 302);
+      await r.body?.cancel();
+      const g = await fetch(`${base}/v1/models`, { redirect: "manual" });
+      assertEquals(g.status, 302);
+      await g.body?.cancel();
+    });
+  } finally {
+    await internal.shutdown();
+  }
+  assertEquals(inner, 0);
+});
+
+Deno.test("a tool's name is written to the log as a name", async () => {
+  await withProxy("flag", ok, async (base, log) => {
+    const name = "web\n{\"forged\":1}" + "x".repeat(10_000);
+    await (await chat(base, [...poisoned.slice(0, 2), { role: "tool", tool_call_id: "c1", name, content: INJECTION }])).body?.cancel();
+    const origin = log[0].origin ?? "";
+    assert(origin.length <= 64 && !/[\n"{}]/.test(origin), origin);
+  });
 });
