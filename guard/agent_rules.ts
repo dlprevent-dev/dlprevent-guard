@@ -28,6 +28,8 @@ interface Rule {
   layer: "egress" | "tool_governance";
   verdict: "block" | "flag";
   re: RegExp;
+  /** A second pattern the same text must also match. */
+  and?: RegExp;
   reason: string;
 }
 
@@ -35,9 +37,23 @@ interface Rule {
 const DROP_SERVICES =
   /\b(?:webhook\.site|requestbin\.(?:com|net)|[\w-]+\.pipedream\.net|[\w-]+\.ngrok(?:-free)?\.(?:app|io|dev)|pastebin\.com|paste\.ee|hastebin\.com|transfer\.sh|0x0\.st|file\.io|temp\.sh|[\w-]+\.oast\.(?:fun|me|pro|site|live|online)|interact\.sh|[\w-]+\.burpcollaborator\.net|canarytokens\.com|discord(?:app)?\.com\/api\/webhooks|hooks\.slack\.com)\b/i;
 
+/** A home directory, however the command spells it. */
+const HOME = String.raw`(?:~|\$HOME|\$\{HOME\}|/root|/home/[^/\s"']+)`;
+
 /** Files that hold keys or passwords on a Linux host — Hermes's own among them. */
-const SECRET_PATHS =
-  /(?:~|\/root|\/home\/[^\/\s"']+)\/\.(?:ssh\/(?![\w.-]+\.pub\b)|aws\/credentials|kube\/config|docker\/config\.json|netrc|git-credentials|gnupg\/|hermes\/\.env|config\/gh\/hosts\.yml)|\/etc\/(?:shadow|gshadow|sudoers)\b|\bid_(?:rsa|ed25519|ecdsa|dsa)\b(?!\.pub)/i;
+const SECRET_PATHS = new RegExp(
+  HOME + String.raw`/\.(?:ssh/(?![\w.-]+\.pub\b)|aws/credentials|kube/config|docker/config\.json|netrc|git-credentials|gnupg/|hermes/(?:\.env|auth\.json)|config/(?:gh/hosts\.yml|hermes/|gcloud/)|azure/|npmrc|pypirc)` +
+    String.raw`|/etc/(?:shadow|gshadow|sudoers\b|kubernetes/)|/var/lib/kubelet/|/proc/(?:self|\d+)/environ|\bid_(?:rsa|ed25519|ecdsa|dsa)\b(?!\.pub)`,
+  "i",
+);
+
+/** No list of key files is complete: any hidden file in a home directory, or
+ *  the environment, is what a hijacked agent reads before it sends. */
+const PRIVATE_READ = new RegExp(HOME + String.raw`/\.[\w-]|/proc/(?:self|\d+)/environ|\bprintenv\b|\benv\s*\|`, "i");
+
+/** A command that sends data to another host, whatever the host is called. */
+const SENDS =
+  /\b(?:curl\b[^\n]*?(?:\s-[dFT]\b|\s--(?:data|form|upload-file)\b|\s-X\s*(?:POST|PUT)\b|\$\()|wget\b[^\n]*?(?:--post-|--body-|\$\()|scp\s[^\n]*[\w.-]+:|rsync\b[^\n]*\s[\w.-]+:|nc(?:at)?\s+\S+\s+\d|socat\b|openssl\s+s_client|telnet\s|urlopen|urllib\.request|requests\.(?:post|put)|httpx\.(?:post|put)|http\.client|fetch\(|Net::HTTP|LWP::|Invoke-(?:WebRequest|RestMethod))|\/dev\/(?:tcp|udp)\//; // case matters: curl -D is not -d
 
 const RULES: Rule[] = [
   {
@@ -65,6 +81,15 @@ const RULES: Rule[] = [
     reason: "Uploads a local file to another host",
   },
   {
+    rule: "agent_secret_exfil",
+    on: "call",
+    layer: "egress",
+    verdict: "block",
+    re: PRIVATE_READ,
+    and: SENDS,
+    reason: "Reads a private file or the environment and sends data to another host",
+  },
+  {
     rule: "agent_reverse_shell",
     on: "call",
     layer: "tool_governance",
@@ -77,7 +102,7 @@ const RULES: Rule[] = [
     on: "call",
     layer: "tool_governance",
     verdict: "flag",
-    re: /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b|\bbase64\s+(?:-d|--decode)\b[^\n|]*\|\s*(?:ba|z)?sh\b/i,
+    re: /\b(?:curl|wget|base64\s+(?:-d|--decode))\b[^\n|]*\|\s*(?:sudo\s+)?(?:(?:\/usr)?\/bin\/(?:env\s+)?)?(?:(?:ba|z|da)?sh|python3?|perl|ruby|node)\b/i,
     reason: "Runs code fetched or decoded on the fly",
   },
   {
@@ -97,7 +122,8 @@ const RULES: Rule[] = [
 export function evaluateAgentActions(text: string, calls: string): LayerVerdict[] {
   const out: LayerVerdict[] = [];
   for (const r of RULES) {
-    if (r.re.test(r.on === "call" ? calls : text)) out.push({ layer: r.layer, verdict: r.verdict, rule: r.rule, reason: r.reason });
+    const s = r.on === "call" ? calls : text;
+    if (r.re.test(s) && (!r.and || r.and.test(s))) out.push({ layer: r.layer, verdict: r.verdict, rule: r.rule, reason: r.reason });
   }
   return out;
 }
