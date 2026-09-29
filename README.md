@@ -63,7 +63,8 @@ one layer; the host-side DLPrevent agent is the other.
 
 - **One container**, no database, no dashboard, no account. It stores no
   prompt and no answer; a finding carries rule names and reasons, never the
-  text they were found in.
+  text they were found in — and the name of the tool it came from, which an
+  MCP server chooses: cut to 64 characters, letters, digits and `_.:@/+-`.
 - **Talks to nothing but your provider.** Everything it needs is fetched when
   the image is built.
 - **Flag mode by default**: forward everything, report findings. Block mode
@@ -75,24 +76,29 @@ one layer; the host-side DLPrevent agent is the other.
 
 ## What it scans
 
-For every request, only what is **new** since the model last answered — the
-user's turn and the tool results — so a finding is reported once, not on
-every later turn. The tool definitions the agent sends along are scanned
-the first time each one comes, for the same reason. Then the model's answer,
-including the tool calls it asks for, streamed or not.
+For every request, what is **new** since the model last answered — the
+user's turn and the tool results, documents and search results in any
+content part — and every earlier turn the guard has not seen yet (a session
+older than the guard), so a finding is reported once, not on every later
+turn. The system prompt and the tool definitions the agent sends along are
+scanned the first time each one comes, for the same reason. Then the model's
+answer, including the tool calls it asks for, streamed or not. A piece the
+guard cannot scan is reported (`guard_scan_failed`), and the rest of the
+request is still scanned.
 
 | Direction | Refused in block mode | Only reported | By |
 |---|---|---|---|
 | user's message | prompt injection and jailbreak patterns; smuggled text (homoglyphs, bidi characters, adversarial suffixes, many-shot jailbreaks); a secret in key shape — an API key pasted into the chat | personal data, multi-turn patterns (role-play escalation, priming), known attack signatures | AnveGuard engine |
-| tool result | instructions hidden in data: override phrases, hidden HTML and HTML comments, invisible tag characters, references to other tools, markdown-image exfiltration; dangerous Python, SQL writes; imperatives aimed at the model and poisoned-authority claims when they address a tool | the same imperatives and claims otherwise, personal data and secrets, known signatures | AnveGuard engine — without its prompt heuristics, which mistake hashes, base64 and code for attacks |
+| tool result | instructions hidden in data: override phrases, hidden HTML and HTML comments, invisible tag characters, references to other tools, markdown-image exfiltration with a placeholder; dangerous Python, SQL writes; imperatives aimed at the model in an `<IMPORTANT>`-style block, and poisoned-authority claims when they address a tool | the same imperatives, image links and claims otherwise, override phrases worded as memory housekeeping, personal data and secrets, known signatures | AnveGuard engine — without its prompt heuristics, which mistake hashes, base64 and code for attacks |
+| system prompt | as tool definitions — an agent builds it from memory it wrote itself and from context files in the repository it works in | — | AnveGuard engine, as data; with `GUARD_TRUST_USER` only reported |
 | tool definitions | instructions in a tool's description or its parameters' descriptions: override phrases, `<IMPORTANT>` blocks, references to other tools (*always bcc …*), known poisoning signatures | — | AnveGuard engine, as MCP tool descriptions — without its prompt heuristics and PII check, and without the plain *you must …* rule, which every second ordinary description sets off |
 | model's answer | a secret in key shape, links to private or loopback addresses, image links that carry data | personal data | AnveGuard engine + [`guard/agent_rules.ts`](guard/agent_rules.ts) |
-| tool calls in the answer | data-drop services, credential files, reverse shells | file uploads to another host (`curl -T`, `curl -d @…`, `scp`, `rsync`), piping into a shell | [`guard/agent_rules.ts`](guard/agent_rules.ts) — in what the model is about to *run*, not in what it says: a model that warns you about an attack names it too |
+| tool calls in the answer | data-drop services, credential files, a hidden file in a home directory or the environment sent to any host, reverse shells | file uploads to another host (`curl -T`, `curl -d @…`, `scp`, `rsync`), piping into a shell | [`guard/agent_rules.ts`](guard/agent_rules.ts) — in what the model is about to *run*, not in what it says: a model that warns you about an attack names it too |
 
-A refused **tool description** does not end the conversation: the guard
-replaces it with a note telling the model not to use the tool, and forwards
-the request. The agent sends the definition with every request; it is
-reported once.
+A refused **tool description** or **system prompt** does not end the
+conversation: the guard replaces it with a note telling the model it was
+blocked, and forwards the request. The agent sends it with every request;
+it is reported once.
 
 A **streamed** answer is held in block mode until it has ended, scanned, and
 then passed on in one piece or refused: a command can only be stopped before
@@ -105,7 +111,8 @@ It also says which tools the model may call — see [Configuration](#configurati
 
 Supported APIs: OpenAI chat completions (`/v1/chat/completions`) and
 Anthropic messages (`/v1/messages`). Everything else passes through
-unscanned.
+unscanned. A redirect from the provider is passed back to the agent, never
+followed by the guard.
 
 ## Deploy
 
@@ -198,11 +205,12 @@ All in `guard/.env`, read when the container starts.
 | `GUARD_UPSTREAM` | — | Default provider for `/v1/…`: its base URL, without `/v1`. |
 | `GUARD_UPSTREAM_KEY` | — | The default provider's key, set on every forwarded request. Unset: the agent's key passes through. |
 | `GUARD_UPSTREAMS` | — | More providers, `name=url,name=url`, each under `/<name>/…`. At least one of this and `GUARD_UPSTREAM` is needed. |
-| `GUARD_KEY_<NAME>` | — | The key for route `<name>` (upper case, `-` as `_`). |
+| `GUARD_KEY_<NAME>` | — | The key for route `<name>` (upper case, `-` as `_`). Two routes that would share a variable (`a-b`, `a_b`) stop the guard from starting. |
 | `GUARD_MODE` | `flag` | `flag`: forward everything, report findings. `block`: refuse a request whose verdict is `block` with a 403, and withhold that content when it comes again. A streamed answer is held until it has ended and then passed on or refused; in flag mode it streams through. |
 | `GUARD_TRUST_USER` | — | `1`: in block mode, what the user typed is reported but never refused. For an agent only its owner can talk to (Hermes's platform allowlist): the owner is not the threat, what reaches the agent from outside is. Tool results, memory, skills, cron jobs, subagent tasks and the agent's own commands are still refused. |
 | `GUARD_POLICY` | — | Path to a JSON file overriding engine settings (`PolicySettings` in [`policy_engine.ts`](supabase/functions/_shared/policy_engine.ts)), mounted into the container; e.g. `{"pii_action": "sanitize"}` masks personal data and secrets before they reach the provider. `{"enable_tool_governance": true, "tool_denylist": ["send_email"]}` makes a call to a listed tool a `block` finding; `tool_allowlist` does the same for every tool not listed. |
-| `GUARD_PORT` | `8787` | Host port, bound to `127.0.0.1` only. |
+| `GUARD_PORT` | `8787` | Port. `compose.yml` publishes it on the host's `127.0.0.1` only. |
+| `GUARD_HOST` | `127.0.0.1` | Address the process listens on. The container image sets `0.0.0.0` — inside the container, so the port can be published; set it outside Docker only if other hosts are to reach the guard, which carries your provider keys and asks callers for nothing. |
 
 The container runs read-only, with no capabilities and no privilege
 escalation; the only writable path is the verdict log.
