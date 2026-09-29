@@ -75,24 +75,29 @@ one layer; the host-side DLPrevent agent is the other.
 
 ## What it scans
 
-For every request, only what is **new** since the model last answered — the
-user's turn and the tool results — so a finding is reported once, not on
-every later turn. The tool definitions the agent sends along are scanned
-the first time each one comes, for the same reason. Then the model's answer,
-including the tool calls it asks for, streamed or not.
+For every request, what is **new** since the model last answered — the
+user's turn and the tool results, documents and search results in any
+content part — and every earlier turn the guard has not seen yet (a session
+older than the guard), so a finding is reported once, not on every later
+turn. The system prompt and the tool definitions the agent sends along are
+scanned the first time each one comes, for the same reason. Then the model's
+answer, including the tool calls it asks for, streamed or not. A piece the
+guard cannot scan is reported (`guard_scan_failed`), and the rest of the
+request is still scanned.
 
 | Direction | Refused in block mode | Only reported | By |
 |---|---|---|---|
 | user's message | prompt injection and jailbreak patterns; smuggled text (homoglyphs, bidi characters, adversarial suffixes, many-shot jailbreaks); a secret in key shape — an API key pasted into the chat | personal data, multi-turn patterns (role-play escalation, priming), known attack signatures | AnveGuard engine |
-| tool result | instructions hidden in data: override phrases, hidden HTML and HTML comments, invisible tag characters, references to other tools, markdown-image exfiltration; dangerous Python, SQL writes; imperatives aimed at the model and poisoned-authority claims when they address a tool | the same imperatives and claims otherwise, personal data and secrets, known signatures | AnveGuard engine — without its prompt heuristics, which mistake hashes, base64 and code for attacks |
+| tool result | instructions hidden in data: override phrases, hidden HTML and HTML comments, invisible tag characters, references to other tools, markdown-image exfiltration with a placeholder; dangerous Python, SQL writes; imperatives aimed at the model in an `<IMPORTANT>`-style block, and poisoned-authority claims when they address a tool | the same imperatives, image links and claims otherwise, override phrases worded as memory housekeeping, personal data and secrets, known signatures | AnveGuard engine — without its prompt heuristics, which mistake hashes, base64 and code for attacks |
+| system prompt | as tool definitions — an agent builds it from memory it wrote itself and from context files in the repository it works in | — | AnveGuard engine, as data; with `GUARD_TRUST_USER` only reported |
 | tool definitions | instructions in a tool's description or its parameters' descriptions: override phrases, `<IMPORTANT>` blocks, references to other tools (*always bcc …*), known poisoning signatures | — | AnveGuard engine, as MCP tool descriptions — without its prompt heuristics and PII check, and without the plain *you must …* rule, which every second ordinary description sets off |
 | model's answer | a secret in key shape, links to private or loopback addresses, image links that carry data | personal data | AnveGuard engine + [`guard/agent_rules.ts`](guard/agent_rules.ts) |
-| tool calls in the answer | data-drop services, credential files, reverse shells | file uploads to another host (`curl -T`, `curl -d @…`, `scp`, `rsync`), piping into a shell | [`guard/agent_rules.ts`](guard/agent_rules.ts) — in what the model is about to *run*, not in what it says: a model that warns you about an attack names it too |
+| tool calls in the answer | data-drop services, credential files, a hidden file in a home directory or the environment sent to any host, reverse shells | file uploads to another host (`curl -T`, `curl -d @…`, `scp`, `rsync`), piping into a shell | [`guard/agent_rules.ts`](guard/agent_rules.ts) — in what the model is about to *run*, not in what it says: a model that warns you about an attack names it too |
 
-A refused **tool description** does not end the conversation: the guard
-replaces it with a note telling the model not to use the tool, and forwards
-the request. The agent sends the definition with every request; it is
-reported once.
+A refused **tool description** or **system prompt** does not end the
+conversation: the guard replaces it with a note telling the model it was
+blocked, and forwards the request. The agent sends it with every request;
+it is reported once.
 
 A **streamed** answer is held in block mode until it has ended, scanned, and
 then passed on in one piece or refused: a command can only be stopped before
