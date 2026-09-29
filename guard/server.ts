@@ -414,8 +414,12 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
   // "ASX 200 closes higher in Sydney" was refused as a jailbreak persona. A
   // city, a first name, a word in capitals: when that is all the persona
   // rule found, it found none. "DAN 11.0", "BetterDAN" still count.
+  // Reported, not refused: a reading that may be harmless still reaches the
+  // log — a filter that drops it would make a bypass invisible.
   const only = (l: LayerVerdict, rule: string, re: RegExp) => l.rule === rule && l.spans?.every((s) => re.test(s.match.trim()));
-  const kept = r.layers.filter((l) => !only(l, "modern_jailbreak_persona", ORDINARY_NAME) && !(tool && only(l, "ignore_prior_instructions", HOUSEKEEPING)));
+  const kept = r.layers
+    .filter((l) => !only(l, "modern_jailbreak_persona", ORDINARY_NAME))
+    .map((l) => tool && only(l, "ignore_prior_instructions", HOUSEKEEPING) ? soften(l) : l);
   const layers = [...kept];
   if (tool) {
     let found = evaluateRetrieved(p.text, { kind: def ? "mcp_tool_desc" : "mcp_tool_result", origin: p.origin, consumer: "tool_router" });
@@ -424,18 +428,27 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
     // model. Only the <IMPORTANT>…</IMPORTANT> form of it stays a finding;
     // the poisoned descriptions tried were caught by other rules as well.
     // A tool result is no different: a web page on babies and screens said
-    // "you should turn the TV off" to its reader and was refused.
-    if (!IMPORTANT_TAG.test(p.text)) found = found.filter((l) => l.rule !== "retrieved_imperative_to_model");
+    // "you should turn the TV off" to its reader and was refused. It is
+    // still reported: a page need not wrap its orders in a tag.
+    const tagged = IMPORTANT_TAG.test(p.text);
+    if (def && !tagged) found = found.filter((l) => l.rule !== "retrieved_imperative_to_model");
     // A search for running shoes on galaxus.ch was refused: the shop's
     // product images sit on hosts no allowlist knows. A fixed image URL in a
     // page carries only what its author already had; it leaks the
-    // conversation only with a placeholder for the model to fill in.
-    if (!TEMPLATED_IMAGE.test(p.text)) found = found.filter((l) => l.rule !== "retrieved_markdown_image_exfil");
+    // conversation only with a placeholder for the model to fill in — or a
+    // path its author wrote for it, so it is reported.
+    const templated = TEMPLATED_IMAGE.test(p.text);
+    found = found.map((l) =>
+      (l.rule === "retrieved_imperative_to_model" && !tagged) || (l.rule === "retrieved_markdown_image_exfil" && !templated) ? soften(l) : l
+    );
     layers.push(...found);
   }
   // The verdict is the kept layers': upstream's counts what was filtered out.
   return { verdict: layers.length || tool || kept.length < r.layers.length ? aggregate(layers, settings) : r.verdict, layers };
 }
+
+/** A block that may be a false positive: reported, never refused. */
+const soften = (l: LayerVerdict): LayerVerdict => l.verdict === "block" ? { ...l, verdict: "flag" } : l;
 
 const METADATA = /^(?:169\.254\.|fd00:ec2::254$|metadata\.google\.internal$)/i;
 
