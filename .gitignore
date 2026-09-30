@@ -1,3 +1,7 @@
 .env
 .DS_Store
 node_modules
+# Local tool output: pentest runs, exploit harness and scanner results.
+/strix_runs/
+/.harness/
+/.source-aware/
