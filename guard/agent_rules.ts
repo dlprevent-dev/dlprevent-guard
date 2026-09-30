@@ -151,7 +151,10 @@ export function asTheShellSees(s: string): string {
   return s
     .replace(/\\[nrt]/g, " ")
     .replace(/\\(["\\])/g, "$1")
-    .replace(/\$'((?:\\x[0-9a-fA-F]{2}|[^'])*)'/g, (_, body: string) => body.replace(/\\x([0-9a-fA-F]{2})/g, (_m, h: string) => String.fromCharCode(parseInt(h, 16))))
+    // `\\.|[^'\\]`, not `\\x..|[^']`: alternatives that both take a
+    // backslash backtrack exponentially when the closing quote is missing —
+    // 60 characters of `\x41` held the guard for minutes.
+    .replace(/\$'((?:\\.|[^'\\])*)'/g, (_, body: string) => body.replace(/\\x([0-9a-fA-F]{2})/g, (_m, h: string) => String.fromCharCode(parseInt(h, 16))))
     .replace(/["'\\]/g, "");
 }
 
