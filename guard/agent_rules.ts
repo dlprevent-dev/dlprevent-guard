@@ -27,11 +27,48 @@ interface Rule {
   on: "call" | "text";
   layer: "egress" | "tool_governance";
   verdict: "block" | "flag";
-  re: RegExp;
+  re: Test;
   /** A second pattern the same text must also match. */
-  and?: RegExp;
+  and?: Test;
   reason: string;
 }
+
+/** A regex, or a check built from several, that says whether text matches. */
+interface Test {
+  test(s: string): boolean;
+}
+
+// Linear time. `tool[^\n]*?X` retries from every `tool` on the line, and
+// 100 KB of `curl ` — a file an agent writes can hold that — took seconds on
+// the guard's only thread. These say the same in one pass.
+
+/** `tool` and later on the same line `rest`. If any occurrence of `tool`
+ *  has `rest` after it, the first one has, so only the first is tried. */
+const after = (tool: RegExp, rest: RegExp): Test => ({
+  test: (s) =>
+    s.split("\n").some((line) => {
+      const m = tool.exec(line);
+      return !!m && rest.test(line.slice(m.index + m[0].length));
+    }),
+});
+
+/** `tool` in one pipe segment, `into` at the start of the next. */
+const pipedInto = (tool: RegExp, into: RegExp): Test => ({
+  test: (s) =>
+    s.split("\n").some((line) => {
+      const segs = line.split("|");
+      return segs.some((seg, i) => i + 1 < segs.length && tool.test(seg) && into.test(segs[i + 1]));
+    }),
+});
+
+/** A `scp`/`rsync` command whose last argument — the destination — is on
+ *  another host, with or without `user@`. */
+const copiesAway = (tool: RegExp, remote: RegExp): Test => ({
+  test: (s) =>
+    s.split(/[\n;&|]/).some((seg) => tool.test(seg) && remote.test(seg.trim().split(/\s+/).pop()!.replace(/["'`,}\]]+$/, ""))),
+});
+
+const anyOf = (...tests: Test[]): Test => ({ test: (s) => tests.some((t) => t.test(s)) });
 
 /** Services whose whole purpose is receiving data from strangers. */
 const DROP_SERVICES =
@@ -60,8 +97,19 @@ const PRIVATE_READ = new RegExp(
 );
 
 /** A command that sends data to another host, whatever the host is called. */
-const SENDS =
-  /\b(?:curl\b[^\n]*?(?:\s-[dFT]\b|\s--(?:data|form|upload-file)\b|\s-X\s*(?:POST|PUT)\b|\$\()|wget\b[^\n]*?(?:--post-|--body-|\$\()|scp\s[^\n]*[\w.-]+:|rsync\b[^\n]*\s[\w.-]+:|nc(?:at)?\s+\S+\s+\d|socat\b|openssl\s+s_client|telnet\s|urlopen|urllib\.request|requests\.(?:post|put)|httpx\.(?:post|put)|http\.client|fetch\(|Net::HTTP|LWP::|Invoke-(?:WebRequest|RestMethod)|https?['"]?\)?\.request\(|ssh\s|aws\s+s3\s+(?:cp|sync|mv)\b[^\n]*\ss3:\/\/|gh\s+gist\s+create\b|(?:dig|nslookup|host)\b[^\n]*\$\()|\/dev\/(?:tcp|udp)\//; // case matters: curl -D is not -d
+// Case matters: curl -D is not -d.
+const SENDS = anyOf(
+  /\b(?:nc(?:at)?\s+\S+\s+\d|socat\b|openssl\s+s_client|telnet\s|urlopen|urllib\.request|requests\.(?:post|put)|httpx\.(?:post|put)|http\.client|fetch\(|Net::HTTP|LWP::|Invoke-(?:WebRequest|RestMethod)|https?['"]?\)?\.request\(|ssh\s|gh\s+gist\s+create\b)|\/dev\/(?:tcp|udp)\//,
+  after(/\bcurl\b/, /\s-[dFT]\b|\s--(?:data|form|upload-file)\b|\s-X\s*(?:POST|PUT)\b|\$\(/),
+  after(/\bwget\b/, /--post-|--body-|\$\(/),
+  after(/\bscp\s/, /[\w.-]+:/),
+  after(/\brsync\b/, /\s[\w.-]+:/),
+  after(/\baws\s+s3\s+(?:cp|sync|mv)\b/, /\ss3:\/\//),
+  after(/\b(?:dig|nslookup|host)\b/, /\$\(/),
+);
+
+/** The start of a command a pipe feeds: a shell or an interpreter. */
+const SHELL = /^\s*(?:sudo\s+)?(?:(?:\/usr)?\/bin\/(?:env\s+)?)?(?:(?:ba|z|da)?sh|python3?|perl|ruby|node)\b/i;
 
 const RULES: Rule[] = [
   {
@@ -87,7 +135,16 @@ const RULES: Rule[] = [
     // Refuses on its own (pentest 11c3/vuln-0007): as a finding only, an
     // upload to a host no list knows went through in block mode.
     verdict: "block",
-    re: /\b(?:curl\b[^\n]*?(?:\s-d\s*@|\s--data(?:-binary|-raw)?[\s=]@|\s-F\s*["']?[\w-]+=@|\s-T\s|\s--upload-file\b)|wget\b[^\n]*?--post-file\b|scp\s+\S+\s+[\w.-]+@[\w.-]+:|rsync\b[^\n]*\s[\w.-]+@[\w.-]+:)/i,
+    // A file (`@file`, `-T`), a command's output (`"$(cat …)"`), or a copy
+    // whose destination — its last argument — is remote, with or without
+    // `user@`. To loopback or a `GUARD_UPLOAD_HOSTS` host it is reported
+    // only (`uploadsStayHome`).
+    re: anyOf(
+      after(/\bcurl\b/i, /\s-d\s*["']?(?:@|\$\()|\s--data(?:-binary|-raw)?[\s=]["']?(?:@|\$\()|\s-F\s*["']?[\w-]+=@|\s-T\s|\s--upload-file\b/i),
+      after(/\bwget\b/i, /--post-file\b|--post-data[\s=]["']?\$\(/i),
+      copiesAway(/\bscp\s/i, /^(?:[\w.-]+@)?[\w.-]+:/),
+      copiesAway(/\brsync\s/i, /^(?:(?:[\w.-]+@)?[\w.-]+:|rsync:\/\/)/),
+    ),
     reason: "Uploads a local file to another host",
   },
   {
@@ -104,7 +161,13 @@ const RULES: Rule[] = [
     on: "call",
     layer: "tool_governance",
     verdict: "block",
-    re: /\/dev\/(?:tcp|udp)\/|\bnc(?:at)?\b[^\n]*\s-[a-z]*e\s|\bmkfifo\b[^\n]*\bnc\b|socket\.socket\([^\n]*\bconnect\(|\bsocat\b[^\n]*exec:/i,
+    re: anyOf(
+      /\/dev\/(?:tcp|udp)\//i,
+      after(/\bnc(?:at)?\b/i, /\s-[a-z]*e\s/i),
+      after(/\bmkfifo\b/i, /\bnc\b/i),
+      after(/socket\.socket\(/i, /\bconnect\(/i),
+      after(/\bsocat\b/i, /exec:/i),
+    ),
     reason: "Opens a remote shell back to another host",
   },
   {
@@ -112,7 +175,7 @@ const RULES: Rule[] = [
     on: "call",
     layer: "tool_governance",
     verdict: "flag",
-    re: /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:(?:\/usr)?\/bin\/(?:env\s+)?)?(?:(?:ba|z|da)?sh|python3?|perl|ruby|node)\b/i,
+    re: pipedInto(/\b(?:curl|wget)\b/i, SHELL),
     reason: "Runs code fetched on the fly",
   },
   {
@@ -122,7 +185,7 @@ const RULES: Rule[] = [
     on: "call",
     layer: "tool_governance",
     verdict: "block",
-    re: /\bbase64\s+(?:-d|--decode|-D)\b[^\n|]*\|\s*(?:sudo\s+)?(?:(?:\/usr)?\/bin\/(?:env\s+)?)?(?:(?:ba|z|da)?sh|python3?|perl|ruby|node)\b/i,
+    re: pipedInto(/\bbase64\s+(?:-d|--decode|-D)\b/i, SHELL),
     reason: "Decodes a hidden command and runs it",
   },
   {
@@ -137,7 +200,7 @@ const RULES: Rule[] = [
     // case and digits the way encoded data does, and a slug or a hash does not.
     // ponytail: hex-encoded data in a path passes; an entropy score if it matters.
     // Case-sensitive for that test, so the tag and scheme spell out both cases.
-    re: /(?:!\[[^\]]*\]\(\s*|^\s*\[[^\]]+\]:\s*|<[iI][mM][gG]\b[^>]*?\b[sS][rR][cC]\s*=\s*["']?)[hH][tT][tT][pP][sS]?:\/\/[^\s)"'>]*?(?:\{\{[^}]+\}\}|\$\{[^}]+\}|=[A-Za-z0-9+\/%_-]{40,}|\/(?=[\w+%=-]*[A-Z])(?=[\w+%=-]*[a-z])(?=[\w+%=-]*\d)[\w+%=-]{40,})/m,
+    re: /(?:!\[[^\]\n]{0,1000}\]\(\s*|^\s*\[[^\]\n]{1,1000}\]:\s*|<[iI][mM][gG]\b[^>\n]{0,1000}?\b[sS][rR][cC]\s*=\s*["']?)[hH][tT][tT][pP][sS]?:\/\/[^\s)"'>]*?(?:\{\{[^}]+\}\}|\$\{[^}]+\}|=[A-Za-z0-9+\/%_-]{40,}|\/(?=[\w+%=-]*[A-Z])(?=[\w+%=-]*[a-z])(?=[\w+%=-]*\d)[\w+%=-]{40,})/m,
     reason: "Image link that carries data in its URL (markdown exfiltration)",
   },
 ];
@@ -158,15 +221,75 @@ export function asTheShellSees(s: string): string {
     .replace(/["'\\]/g, "");
 }
 
+const LOOPBACK = /^(?:localhost|127(?:\.\d{1,3}){3}|::1|0\.0\.0\.0)$/i;
+
+/** The strings in the tool calls' arguments: each JSON value on its own, so
+ *  a command is read without the JSON around it. */
+function argumentStrings(calls: string): string[] {
+  const out: string[] = [];
+  const walk = (v: unknown): void => {
+    if (typeof v === "string") out.push(v);
+    else if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === "object") Object.values(v).forEach(walk);
+  };
+  for (const line of calls.split("\n")) {
+    try {
+      walk(JSON.parse(line));
+    } catch {
+      out.push(line);
+    }
+  }
+  return out;
+}
+
+/** Where each upload in the calls goes: the hosts named in every curl, wget,
+ *  scp or rsync segment. Undefined when a segment names none the guard can
+ *  read — then nothing is known to stay home. */
+export function uploadTargets(calls: string): string[] | undefined {
+  const hosts: string[] = [];
+  for (const arg of argumentStrings(calls)) {
+    for (const [seg, tool] of asTheShellSees(arg).matchAll(/\b(curl|wget|scp|rsync)\b[^\n;&|]*/g)) {
+      const found: string[] = [];
+      for (let t of seg.split(/\s+/).slice(1)) {
+        t = t.replace(/[,}\]]+$/, "");
+        if (t === "" || t.startsWith("-") || t.startsWith("@")) continue;
+        const m = t.match(/^[a-z][\w+.-]*:\/\/(?:[^@/\s]*@)?(\[[^\]]+\]|[^/:?#\s]+)/i) ??
+          ((tool === "scp" || tool === "rsync") ? t.match(/^(?:[^@\s]+@)?(\[[^\]]+\]|[^:/\s]+):/) : null) ??
+          t.match(/^(\[[^\]]+\]|localhost|[\w-]+(?:\.[\w-]+)+)(?::\d+)?(?:[/?#]|$)/i);
+        if (m) found.push(m[1].replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase());
+      }
+      if (found.length === 0) return undefined;
+      hosts.push(...found);
+    }
+  }
+  return hosts;
+}
+
+/** Every upload goes to loopback or a host the operator named. `*.x.ch`
+ *  covers the subdomains of x.ch. */
+function uploadsStayHome(calls: string, allowed: string[]): boolean {
+  const hosts = uploadTargets(calls);
+  return !!hosts && hosts.length > 0 &&
+    hosts.every((h) => LOOPBACK.test(h) || allowed.some((a) => a.startsWith("*.") ? h.endsWith(a.slice(1)) : h === a));
+}
+
 /** One verdict per rule that fires. `text` is the whole answer, `calls`
- *  the arguments of the tool calls in it. */
-export function evaluateAgentActions(text: string, calls: string): LayerVerdict[] {
+ *  the arguments of the tool calls in it, `uploadHosts` the hosts an upload
+ *  may go to (`GUARD_UPLOAD_HOSTS`). */
+export function evaluateAgentActions(text: string, calls: string, uploadHosts: string[] = []): LayerVerdict[] {
   const out: LayerVerdict[] = [];
   const plain = asTheShellSees(calls);
-  const hit = (re: RegExp, s: string, alt?: string) => re.test(s) || (alt !== undefined && re.test(alt));
+  const hit = (re: Test, s: string, alt?: string) => re.test(s) || (alt !== undefined && re.test(alt));
   for (const r of RULES) {
     const [s, alt] = r.on === "call" ? [calls, plain] : [text, undefined];
-    if (hit(r.re, s, alt) && (!r.and || hit(r.and, s, alt))) out.push({ layer: r.layer, verdict: r.verdict, rule: r.rule, reason: r.reason });
+    if (!hit(r.re, s, alt) || (r.and && !hit(r.and, s, alt))) continue;
+    // A deploy to the agent's own machine or to a host the operator named
+    // is work, not exfiltration: reported, not refused.
+    if (r.rule === "agent_upload_command" && uploadsStayHome(calls, uploadHosts)) {
+      out.push({ layer: r.layer, verdict: "flag", rule: r.rule, reason: "Uploads a local file to loopback or a host in GUARD_UPLOAD_HOSTS" });
+    } else {
+      out.push({ layer: r.layer, verdict: r.verdict, rule: r.rule, reason: r.reason });
+    }
   }
   return out;
 }
