@@ -93,7 +93,7 @@ request is still scanned.
 | system prompt | as tool definitions — an agent builds it from memory it wrote itself and from context files in the repository it works in | — | AnveGuard engine, as data; with `GUARD_TRUST_USER` only reported |
 | tool definitions | instructions in a tool's description or its parameters' descriptions: override phrases, `<IMPORTANT>` blocks, references to other tools (*always bcc …*), known poisoning signatures | — | AnveGuard engine, as MCP tool descriptions — without its prompt heuristics and PII check, and without the plain *you must …* rule, which every second ordinary description sets off |
 | model's answer | a secret in key shape, links to private or loopback addresses, image links that carry data | personal data | AnveGuard engine + [`guard/agent_rules.ts`](guard/agent_rules.ts) |
-| tool calls in the answer | data-drop services, credential files, a hidden file in a home directory or the environment sent to any host, reverse shells | file uploads to another host (`curl -T`, `curl -d @…`, `scp`, `rsync`), piping into a shell | [`guard/agent_rules.ts`](guard/agent_rules.ts) — in what the model is about to *run*, not in what it says: a model that warns you about an attack names it too |
+| tool calls in the answer | data-drop services, credential files, a hidden file in a home directory, a `.env` or the environment sent to any host (also over `ssh`, `aws s3`, `gh gist`, Node's `https`, a DNS lookup), file uploads to another host (`curl -T`, `curl -d @…`, `scp`, `rsync`), reverse shells, a base64 blob decoded into a shell — also when quotes or `$'\x..'` escapes split the words | a download piped into a shell | [`guard/agent_rules.ts`](guard/agent_rules.ts) — in what the model is about to *run*, not in what it says: a model that warns you about an attack names it too |
 
 A refused **tool description** or **system prompt** does not end the
 conversation: the guard replaces it with a note telling the model it was
@@ -125,7 +125,10 @@ Known gaps: the assistant turns an agent sends back as history are not
 scanned (they were scanned when the model gave them), and a person who types
 Hermes's own markers (`<memory-context>`, a skill header) gets that text
 scanned as data, without the prompt heuristics — relevant only when the
-person typing is not trusted.
+person typing is not trusted. The tool-call rules read one answer at a time:
+a secret read in one turn and sent in a later one is not put together, and a
+command assembled from variables or `eval` is not unfolded — only quoting is.
+Hex-encoded data in an image path passes.
 
 ## Deploy
 
