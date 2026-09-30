@@ -43,17 +43,25 @@ const HOME = String.raw`(?:~|\$HOME|\$\{HOME\}|/root|/home/[^/\s"']+)`;
 /** Files that hold keys or passwords on a Linux host — Hermes's own among them. */
 const SECRET_PATHS = new RegExp(
   HOME + String.raw`/\.(?:ssh/(?![\w.-]+\.pub\b)|aws/credentials|kube/config|docker/config\.json|netrc|git-credentials|gnupg/|hermes/(?:\.env|auth\.json)|config/(?:gh/hosts\.yml|hermes/|gcloud/)|azure/|npmrc|pypirc)` +
-    String.raw`|/etc/(?:shadow|gshadow|sudoers\b|kubernetes/)|/var/lib/kubelet/|/proc/(?:self|\d+)/environ|\bid_(?:rsa|ed25519|ecdsa|dsa)\b(?!\.pub)`,
-  "i",
+    String.raw`|/etc/(?:shadow|gshadow|sudoers\b|kubernetes/)|/var/lib/kubelet/|/proc/(?:self|\d+)/environ|\bid_(?:rsa|ed25519|ecdsa|dsa)\b(?!\.pub)` +
+    // The same files named from inside home, after a `cd ~`.
+    String.raw`|(?:^|[\s;&|(=])\.(?:ssh(?:/(?![\w.-]+\.pub\b)|(?=[\s;&|)]|$))|aws/credentials|netrc\b|git-credentials\b|docker/config\.json|kube/config)`,
+  "im",
 );
 
 /** No list of key files is complete: any hidden file in a home directory, or
  *  the environment, is what a hijacked agent reads before it sends. */
-const PRIVATE_READ = new RegExp(HOME + String.raw`/\.[\w-]|/proc/(?:self|\d+)/environ|\bprintenv\b|\benv\s*\|`, "i");
+const PRIVATE_READ = new RegExp(
+  HOME + String.raw`/\.[\w-]|/proc/(?:self|\d+)/environ|\bprintenv\b|\benv\s*\|` +
+    // A project's `.env` is as private as one in home, and a hidden
+    // directory named without the home prefix is still in home.
+    String.raw`|(?:^|[\s/@=])\.env\b|(?:^|[\s;&|(=])\.(?:ssh|aws|gnupg|kube|docker|config)\b`,
+  "im",
+);
 
 /** A command that sends data to another host, whatever the host is called. */
 const SENDS =
-  /\b(?:curl\b[^\n]*?(?:\s-[dFT]\b|\s--(?:data|form|upload-file)\b|\s-X\s*(?:POST|PUT)\b|\$\()|wget\b[^\n]*?(?:--post-|--body-|\$\()|scp\s[^\n]*[\w.-]+:|rsync\b[^\n]*\s[\w.-]+:|nc(?:at)?\s+\S+\s+\d|socat\b|openssl\s+s_client|telnet\s|urlopen|urllib\.request|requests\.(?:post|put)|httpx\.(?:post|put)|http\.client|fetch\(|Net::HTTP|LWP::|Invoke-(?:WebRequest|RestMethod))|\/dev\/(?:tcp|udp)\//; // case matters: curl -D is not -d
+  /\b(?:curl\b[^\n]*?(?:\s-[dFT]\b|\s--(?:data|form|upload-file)\b|\s-X\s*(?:POST|PUT)\b|\$\()|wget\b[^\n]*?(?:--post-|--body-|\$\()|scp\s[^\n]*[\w.-]+:|rsync\b[^\n]*\s[\w.-]+:|nc(?:at)?\s+\S+\s+\d|socat\b|openssl\s+s_client|telnet\s|urlopen|urllib\.request|requests\.(?:post|put)|httpx\.(?:post|put)|http\.client|fetch\(|Net::HTTP|LWP::|Invoke-(?:WebRequest|RestMethod)|https?['"]?\)?\.request\(|ssh\s|aws\s+s3\s+(?:cp|sync|mv)\b[^\n]*\ss3:\/\/|gh\s+gist\s+create\b|(?:dig|nslookup|host)\b[^\n]*\$\()|\/dev\/(?:tcp|udp)\//; // case matters: curl -D is not -d
 
 const RULES: Rule[] = [
   {
@@ -76,7 +84,9 @@ const RULES: Rule[] = [
     rule: "agent_upload_command",
     on: "call",
     layer: "egress",
-    verdict: "flag",
+    // Refuses on its own (pentest 11c3/vuln-0007): as a finding only, an
+    // upload to a host no list knows went through in block mode.
+    verdict: "block",
     re: /\b(?:curl\b[^\n]*?(?:\s-d\s*@|\s--data(?:-binary|-raw)?[\s=]@|\s-F\s*["']?[\w-]+=@|\s-T\s|\s--upload-file\b)|wget\b[^\n]*?--post-file\b|scp\s+\S+\s+[\w.-]+@[\w.-]+:|rsync\b[^\n]*\s[\w.-]+@[\w.-]+:)/i,
     reason: "Uploads a local file to another host",
   },
@@ -102,8 +112,18 @@ const RULES: Rule[] = [
     on: "call",
     layer: "tool_governance",
     verdict: "flag",
-    re: /\b(?:curl|wget|base64\s+(?:-d|--decode))\b[^\n|]*\|\s*(?:sudo\s+)?(?:(?:\/usr)?\/bin\/(?:env\s+)?)?(?:(?:ba|z|da)?sh|python3?|perl|ruby|node)\b/i,
-    reason: "Runs code fetched or decoded on the fly",
+    re: /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:(?:\/usr)?\/bin\/(?:env\s+)?)?(?:(?:ba|z|da)?sh|python3?|perl|ruby|node)\b/i,
+    reason: "Runs code fetched on the fly",
+  },
+  {
+    // An install script piped to a shell is everyday work; a blob decoded
+    // and run is not — it exists to hide the command from rules like these.
+    rule: "agent_decode_to_shell",
+    on: "call",
+    layer: "tool_governance",
+    verdict: "block",
+    re: /\bbase64\s+(?:-d|--decode|-D)\b[^\n|]*\|\s*(?:sudo\s+)?(?:(?:\/usr)?\/bin\/(?:env\s+)?)?(?:(?:ba|z|da)?sh|python3?|perl|ruby|node)\b/i,
+    reason: "Decodes a hidden command and runs it",
   },
   {
     rule: "agent_markdown_exfil",
@@ -122,13 +142,28 @@ const RULES: Rule[] = [
   },
 ];
 
+/** The command as the shell will see it: quotes that split a word
+ *  (`c'u'rl`, `.s"s"h`), backslashes and `$'\x2e'` escapes removed, JSON's
+ *  own escapes undone first. A rule fires on the raw text or on this. */
+// ponytail: undoes quoting only; variables, globs and `eval` of built strings
+// still pass — a text guard reads text, the README says so.
+export function asTheShellSees(s: string): string {
+  return s
+    .replace(/\\[nrt]/g, " ")
+    .replace(/\\(["\\])/g, "$1")
+    .replace(/\$'((?:\\x[0-9a-fA-F]{2}|[^'])*)'/g, (_, body: string) => body.replace(/\\x([0-9a-fA-F]{2})/g, (_m, h: string) => String.fromCharCode(parseInt(h, 16))))
+    .replace(/["'\\]/g, "");
+}
+
 /** One verdict per rule that fires. `text` is the whole answer, `calls`
  *  the arguments of the tool calls in it. */
 export function evaluateAgentActions(text: string, calls: string): LayerVerdict[] {
   const out: LayerVerdict[] = [];
+  const plain = asTheShellSees(calls);
+  const hit = (re: RegExp, s: string, alt?: string) => re.test(s) || (alt !== undefined && re.test(alt));
   for (const r of RULES) {
-    const s = r.on === "call" ? calls : text;
-    if (r.re.test(s) && (!r.and || r.and.test(s))) out.push({ layer: r.layer, verdict: r.verdict, rule: r.rule, reason: r.reason });
+    const [s, alt] = r.on === "call" ? [calls, plain] : [text, undefined];
+    if (hit(r.re, s, alt) && (!r.and || hit(r.and, s, alt))) out.push({ layer: r.layer, verdict: r.verdict, rule: r.rule, reason: r.reason });
   }
   return out;
 }

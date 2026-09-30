@@ -12,5 +12,8 @@ WORKDIR /app/guard
 RUN deno cache --frozen server.ts
 # Inside the container every interface; compose publishes it on 127.0.0.1.
 ENV GUARD_HOST=0.0.0.0
+# Deno looks for a newer version of itself at start: a connection to
+# dl.deno.land, which "talks to nothing but your provider" rules out.
+ENV DENO_NO_UPDATE_CHECK=1
 EXPOSE 8787
 CMD ["deno", "run", "--cached-only", "--allow-net", "--allow-env", "--allow-read=/app,/deno-dir,/etc/dlprevent-guard", "--allow-write=/var/log/dlprevent-guard", "server.ts"]
