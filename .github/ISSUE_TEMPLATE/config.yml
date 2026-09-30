@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: mailto:security@dlprevent.ch
+    about: Report privately to security@dlprevent.ch, not as an issue.
+  - name: DLPrevent itself
+    url: https://github.com/dlprevent-dev/dlprevent/issues
+    about: Problems with the agents or the dashboard belong in the main repo.
