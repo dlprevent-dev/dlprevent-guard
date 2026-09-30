@@ -67,7 +67,7 @@
     {
       "id": "ti-2024-echoleak",
       "kind": "regex",
-      "pattern": "!\\[[^\\]]*\\]\\(https?://[^)]+/(?:[?&][^=]+=[^&)]+){0,3}[?&][^=]+=\\{\\{[^}]+\\}\\}",
+      "pattern": "!\\[[^[\\]\\n]{0,1000}\\]\\(https?://[^)\\s]+/(?:[?&][^=&)\\s]+=[^&)\\s]+){0,3}[?&][^=&)\\s]+=\\{\\{[^}]+\\}\\}",
       "severity": "critical",
       "category": "exfiltration",
       "description": "EchoLeak (CVE-2025-32711 family) — markdown image with templated URL exfiltrating secrets.",

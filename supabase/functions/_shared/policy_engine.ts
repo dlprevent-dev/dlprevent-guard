@@ -1693,7 +1693,7 @@ function toModelImperative(text: string): boolean {
 // dlprevent-guard: bounded, and the inline form no longer waits for its `)`
 // — unbounded repeats rescanned the rest of the text from every `![`. The
 // URL's start carries the host and the template; past 4000 it is long anyway.
-const MD_IMG_RE = /!\[[^\]\n]{0,1000}\]\(([^)\n]{1,4000})|!\[[^\]\n]{0,1000}\]\[([^\]\n]{1,1000})\]/g;
+const MD_IMG_RE = /!\[[^[\]\n]{0,1000}\]\(([^)\n]{1,4000})|!\[[^[\]\n]{0,1000}\]\[([^[\]\n]{1,1000})\]/g;
 const URL_TEMPLATE_RE = /\{\{[^}]+\}\}|\$\{[^}]+\}|\[(?:INSERT|DATA|LEAK|CONVERSATION|MESSAGES?|SECRETS?|CONTEXT|HISTORY)[_A-Z]*\]/i;
 
 // Hidden HTML patterns — display:none / visibility:hidden / aria-hidden /

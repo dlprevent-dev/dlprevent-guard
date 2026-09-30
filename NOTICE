@@ -17,7 +17,10 @@ Version 2.0, by the DLPrevent project (info@dlprevent.ch):
     container.
   - supabase/functions/_shared/policy_engine.ts: detectPII is bounded by
     MAX_REGEX_INPUT_LEN and its email pattern no longer backtracks
-    quadratically.
+    quadratically; the <IMPORTANT>-tag and markdown-image checks run in
+    linear time. Each change is marked "dlprevent-guard:" in the file.
+  - supabase/functions/_shared/threat_intel.json: the EchoLeak signature's
+    repeats are bounded, so it no longer backtracks quadratically.
   - README.md: replaced.
   - docs/images/dlprevent-logo.svg: the DLPrevent logo.
 

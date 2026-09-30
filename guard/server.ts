@@ -585,7 +585,7 @@ const HOUSEKEEPING = /^(?:delete|drop|erase|wipe|skip|override)\b[\s\S]*\b(?:con
 
 // Bounded repeats: with `[^)]*`, many `![](` openings and no `)` rescan the
 // rest of the text from each one.
-const TEMPLATED_IMAGE = /!\[[^\]\n]{0,1000}\]\([^)\n]{0,2000}?(?:\{\{[^}]{1,200}\}\}|\$\{[^}]{1,200}\}|\[(?:INSERT|DATA|LEAK|CONVERSATION|MESSAGES?|SECRETS?|CONTEXT|HISTORY)[_A-Z]{0,50}\])/i;
+const TEMPLATED_IMAGE = /!\[[^[\]\n]{0,1000}\]\([^()\n]{0,2000}?(?:\{\{[^}]{1,200}\}\}|\$\{[^}]{1,200}\}|\[(?:INSERT|DATA|LEAK|CONVERSATION|MESSAGES?|SECRETS?|CONTEXT|HISTORY)[_A-Z]{0,50}\])/i;
 /** Which layer's reason an alert should lead with. The reader sees the
  *  first reason only, and upstream lists the vaguest first: "ignore all
  *  previous instructions" came out as "Persona-bypass language requesting an

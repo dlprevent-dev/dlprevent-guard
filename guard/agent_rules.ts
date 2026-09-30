@@ -200,7 +200,7 @@ const RULES: Rule[] = [
     // case and digits the way encoded data does, and a slug or a hash does not.
     // ponytail: hex-encoded data in a path passes; an entropy score if it matters.
     // Case-sensitive for that test, so the tag and scheme spell out both cases.
-    re: /(?:!\[[^\]\n]{0,1000}\]\(\s*|^\s*\[[^\]\n]{1,1000}\]:\s*|<[iI][mM][gG]\b[^>\n]{0,1000}?\b[sS][rR][cC]\s*=\s*["']?)[hH][tT][tT][pP][sS]?:\/\/[^\s)"'>]*?(?:\{\{[^}]+\}\}|\$\{[^}]+\}|=[A-Za-z0-9+\/%_-]{40,}|\/(?=[\w+%=-]*[A-Z])(?=[\w+%=-]*[a-z])(?=[\w+%=-]*\d)[\w+%=-]{40,})/m,
+    re: /(?:!\[[^[\]\n]{0,1000}\]\(\s*|^\s*\[[^[\]\n]{1,1000}\]:\s*|<[iI][mM][gG]\b[^>\n]{0,1000}?\b[sS][rR][cC]\s*=\s*["']?)[hH][tT][tT][pP][sS]?:\/\/[^\s)"'>]*?(?:\{\{[^}]+\}\}|\$\{[^}]+\}|=[A-Za-z0-9+\/%_-]{40,}|\/(?=[\w+%=-]*[A-Z])(?=[\w+%=-]*[a-z])(?=[\w+%=-]*\d)[\w+%=-]{40,})/m,
     reason: "Image link that carries data in its URL (markdown exfiltration)",
   },
 ];
