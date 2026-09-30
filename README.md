@@ -93,7 +93,7 @@ request is still scanned.
 | system prompt | as tool definitions — an agent builds it from memory it wrote itself and from context files in the repository it works in | — | AnveGuard engine, as data; with `GUARD_TRUST_USER` only reported |
 | tool definitions | instructions in a tool's description or its parameters' descriptions: override phrases, `<IMPORTANT>` blocks, references to other tools (*always bcc …*), known poisoning signatures | — | AnveGuard engine, as MCP tool descriptions — without its prompt heuristics and PII check, and without the plain *you must …* rule, which every second ordinary description sets off |
 | model's answer | a secret in key shape, links to private or loopback addresses, image links that carry data | personal data | AnveGuard engine + [`guard/agent_rules.ts`](guard/agent_rules.ts) |
-| tool calls in the answer | data-drop services, credential files, a hidden file in a home directory, a `.env` or the environment sent to any host (also over `ssh`, `aws s3`, `gh gist`, Node's `https`, a DNS lookup), file uploads to another host (`curl -T`, `curl -d @…`, `scp`, `rsync`), reverse shells, a base64 blob decoded into a shell — also when quotes or `$'\x..'` escapes split the words | a download piped into a shell | [`guard/agent_rules.ts`](guard/agent_rules.ts) — in what the model is about to *run*, not in what it says: a model that warns you about an attack names it too |
+| tool calls in the answer | data-drop services, credential files, a hidden file in a home directory, a `.env` or the environment sent to any host (also over `ssh`, `aws s3`, `gh gist`, Node's `https`, a DNS lookup), file uploads to another host (`curl -T`, `curl -d @…` or `"$(…)"`, `scp`, `rsync`) — to loopback or a `GUARD_UPLOAD_HOSTS` host only reported, and refused whenever the guard cannot tell where it goes; reverse shells, a base64 blob decoded into a shell — also when quotes or `$'\x..'` escapes split the words | a download piped into a shell | [`guard/agent_rules.ts`](guard/agent_rules.ts) — in what the model is about to *run*, not in what it says: a model that warns you about an attack names it too |
 
 A refused **tool description** or **system prompt** does not end the
 conversation: the guard replaces it with a note telling the model it was
@@ -144,16 +144,6 @@ curl -s localhost:8787/healthz                             # ok
 
 Then give the agent `http://127.0.0.1:8787/v1` as its API base URL instead of
 the provider's.
-
-**While the repository is private**, the host needs a key to clone and pull
-it. A read-only deploy key reaches this repository and nothing else:
-
-```bash
-ssh-keygen -t ed25519 -N '' -C "$(hostname)-deploy" -f /root/.ssh/dlprevent-guard-deploy
-printf 'Host github.com\n  IdentityFile /root/.ssh/dlprevent-guard-deploy\n  IdentitiesOnly yes\n' >> /root/.ssh/config
-cat /root/.ssh/dlprevent-guard-deploy.pub    # → GitHub: Settings → Deploy keys, write access off
-git clone git@github.com:dlprevent-dev/dlprevent-guard.git
-```
 
 Updates: `git pull && docker compose up -d --build` in `guard/`. The
 `.env` belongs in `guard/`, next to `compose.yml`; one in the repository root
@@ -223,6 +213,7 @@ All in `guard/.env`, read when the container starts.
 | `GUARD_UPSTREAMS` | — | More providers, `name=url,name=url`, each under `/<name>/…`. At least one of this and `GUARD_UPSTREAM` is needed. |
 | `GUARD_KEY_<NAME>` | — | The key for route `<name>` (upper case, `-` as `_`). Two routes that would share a variable (`a-b`, `a_b`) stop the guard from starting. |
 | `GUARD_MODE` | `flag` | `flag`: forward everything, report findings. `block`: refuse a request whose verdict is `block` with a 403, and withhold that content when it comes again. A streamed answer is held until it has ended and then passed on or refused; in flag mode it streams through. |
+| `GUARD_UPLOAD_HOSTS` | — | Hosts the agent may upload files to, besides loopback, comma-separated; `*.corp.example` covers its subdomains. In block mode an upload (`curl -d @…`, `scp`, `rsync` …) there is reported, not refused. Every other upload, and one whose destination the guard cannot read, is refused. |
 | `GUARD_TRUST_USER` | — | `1`: in block mode, what the user typed and the system prompt are reported but never refused. For an agent only its owner can talk to (Hermes's platform allowlist): the owner is not the threat, what reaches the agent from outside is. Tool results, memory, skills, cron jobs, subagent tasks and the agent's own commands are still refused. |
 | `GUARD_POLICY` | — | Path to a JSON file overriding engine settings (`PolicySettings` in [`policy_engine.ts`](supabase/functions/_shared/policy_engine.ts)), mounted into the container; e.g. `{"pii_action": "sanitize"}` masks personal data and secrets before they reach the provider. `{"enable_tool_governance": true, "tool_denylist": ["send_email"]}` makes a call to a listed tool a `block` finding; `tool_allowlist` does the same for every tool not listed. |
 | `GUARD_PORT` | `8787` | Port. `compose.yml` publishes it on the host's `127.0.0.1` only. |
@@ -305,5 +296,6 @@ with or endorsed by ANVE-AI, and "AnveGuard" is their name, used here only to
 say where the engine comes from.
 
 DLPrevent itself is a separate project under its own license
-([PolyForm Noncommercial 1.0.0](https://github.com/dlprevent-dev/dlprevent/blob/main/LICENSE));
-this repository does not include any of it. Contact: info@dlprevent.ch.
+([Apache License 2.0](https://github.com/dlprevent-dev/dlprevent/blob/main/LICENSE));
+this repository does not include any of it. Contact: info@dlprevent.ch;
+vulnerabilities as [SECURITY.md](SECURITY.md) says.

@@ -491,7 +491,7 @@ function args(v: unknown): string | undefined {
 /** Scan one piece. Tool results go through the retrieved-content scanner
  *  on top of the ordinary input scan: instructions hidden in a web page or
  *  a file are the injection an agent actually falls for. */
-export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: string; tools?: string[] } = {}): Promise<{ verdict: Verdict; layers: LayerVerdict[] }> {
+export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: string; tools?: string[]; uploadHosts?: string[] } = {}): Promise<{ verdict: Verdict; layers: LayerVerdict[] }> {
   const base = {
     legacy: { blocked_keywords: [], allowed_keywords: [], use_global_defaults: false },
     rules: [],
@@ -507,7 +507,7 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
     // picks up the machine's credentials.
     const own = r.layers.map((l) => l.rule === "egress_private_ip" && !METADATA.test(l.matched ?? "") ? { ...l, verdict: "flag" as Verdict } : l);
     // What the agent is about to do: upstream judges text, not commands.
-    const layers = [...own, ...evaluateAgentActions(p.text, p.calls ?? "")];
+    const layers = [...own, ...evaluateAgentActions(p.text, p.calls ?? "", ctx.uploadHosts)];
     return { verdict: layers.length ? aggregate(layers, settings) : r.verdict, layers };
   }
   // A tool result is data, not a prompt. Upstream's heuristics look for
@@ -568,7 +568,7 @@ const soften = (l: LayerVerdict): LayerVerdict => l.verdict === "block" ? { ...l
 
 /** `scan`, but a piece the guard cannot scan is reported, not waved
  *  through — and the rest of the request is still scanned. */
-async function judge(p: Piece, settings: PolicySettings, ctx: { model?: string; tools?: string[] } = {}): Promise<{ verdict: Verdict; layers: LayerVerdict[] }> {
+async function judge(p: Piece, settings: PolicySettings, ctx: { model?: string; tools?: string[]; uploadHosts?: string[] } = {}): Promise<{ verdict: Verdict; layers: LayerVerdict[] }> {
   try {
     return await scan(p, settings, ctx);
   } catch (e) {
@@ -585,7 +585,7 @@ const HOUSEKEEPING = /^(?:delete|drop|erase|wipe|skip|override)\b[\s\S]*\b(?:con
 
 // Bounded repeats: with `[^)]*`, many `![](` openings and no `)` rescan the
 // rest of the text from each one.
-const TEMPLATED_IMAGE = /!\[[^\]\n]{0,1000}\]\([^)\n]{0,2000}?(?:\{\{[^}]{1,200}\}\}|\$\{[^}]{1,200}\}|\[(?:INSERT|DATA|LEAK|CONVERSATION|MESSAGES?|SECRETS?|CONTEXT|HISTORY)[_A-Z]{0,50}\])/i;
+const TEMPLATED_IMAGE = /!\[[^[\]\n]{0,1000}\]\([^()\n]{0,2000}?(?:\{\{[^}]{1,200}\}\}|\$\{[^}]{1,200}\}|\[(?:INSERT|DATA|LEAK|CONVERSATION|MESSAGES?|SECRETS?|CONTEXT|HISTORY)[_A-Z]{0,50}\])/i;
 /** Which layer's reason an alert should lead with. The reader sees the
  *  first reason only, and upstream lists the vaguest first: "ignore all
  *  previous instructions" came out as "Persona-bypass language requesting an
@@ -652,6 +652,10 @@ export interface Config {
    *  talks to: the owner is not who the guard is for, what reaches the agent
    *  from outside is. */
   trustUser?: boolean;
+  /** Hosts an agent may upload files to (`GUARD_UPLOAD_HOSTS`), besides
+   *  loopback: an upload there is reported, not refused. `*.x.ch` for the
+   *  subdomains of x.ch. */
+  uploadHosts?: string[];
   log: string;
   settings: PolicySettings;
 }
@@ -912,7 +916,7 @@ export function handler(cfg: Config, writeLog: (r: Record) => Promise<void>) {
       const answer = answerOf(parsed);
       if (answer.text) {
         const p: Piece = { direction: "output", text: answer.text, calls: answer.calls };
-        const { verdict, layers } = await judge(p, cfg.settings, { model, tools: answer.tools });
+        const { verdict, layers } = await judge(p, cfg.settings, { model, tools: answer.tools, uploadHosts: cfg.uploadHosts });
         if (verdict !== "allow") {
           const block = cfg.mode === "block" && verdict === "block";
           const rec = record(p, verdict, layers, block, model, to.name);
@@ -943,7 +947,7 @@ async function scanSse(sse: string, cfg: Config, model: string | undefined, upst
     const text = c.text();
     if (!text) return;
     const p: Piece = { direction: "output", text, calls: c.calls() };
-    const { verdict, layers } = await judge(p, cfg.settings, { model, tools: c.tools });
+    const { verdict, layers } = await judge(p, cfg.settings, { model, tools: c.tools, uploadHosts: cfg.uploadHosts });
     if (verdict === "allow") return;
     const rec = record(p, verdict, layers, mayBlock && cfg.mode === "block" && verdict === "block", model, upstream);
     await write(rec);
@@ -1003,6 +1007,7 @@ if (import.meta.main) {
     fallback,
     mode,
     trustUser: Deno.env.get("GUARD_TRUST_USER") === "1",
+    uploadHosts: (Deno.env.get("GUARD_UPLOAD_HOSTS") ?? "").split(",").map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0),
     log: Deno.env.get("GUARD_LOG") ?? "/var/log/dlprevent-guard/verdicts.jsonl",
     settings: await loadSettings(Deno.env.get("GUARD_POLICY")),
   };
