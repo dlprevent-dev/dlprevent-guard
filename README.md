@@ -110,9 +110,22 @@ the two columns: `"pii_action": "block"`, `"injection_action": "flag"`.
 It also says which tools the model may call — see [Configuration](#configuration).
 
 Supported APIs: OpenAI chat completions (`/v1/chat/completions`) and
-Anthropic messages (`/v1/messages`). Everything else passes through
-unscanned. A redirect from the provider is passed back to the agent, never
-followed by the guard.
+Anthropic messages (`/v1/messages`), however the path is spelled (`//`, a
+trailing `/`, `%2F`). Everything else passes through unscanned — in block
+mode except what makes the model answer: `/v1/responses`, `/v1/completions`
+and batches are refused, since the guard does not read them. Block mode also
+refuses what it cannot read instead of letting it past: a body that is not
+JSON (`NaN`, say), a compressed body, a body over 32 MB, and an answer that is
+neither JSON nor a stream. A request that carries an `Origin` header — a
+browser, not an agent — is refused in both modes, so a web page cannot spend
+the key the guard carries. A redirect from the provider is passed back to the
+agent, never followed by the guard.
+
+Known gaps: the assistant turns an agent sends back as history are not
+scanned (they were scanned when the model gave them), and a person who types
+Hermes's own markers (`<memory-context>`, a skill header) gets that text
+scanned as data, without the prompt heuristics — relevant only when the
+person typing is not trusted.
 
 ## Deploy
 
@@ -207,7 +220,7 @@ All in `guard/.env`, read when the container starts.
 | `GUARD_UPSTREAMS` | — | More providers, `name=url,name=url`, each under `/<name>/…`. At least one of this and `GUARD_UPSTREAM` is needed. |
 | `GUARD_KEY_<NAME>` | — | The key for route `<name>` (upper case, `-` as `_`). Two routes that would share a variable (`a-b`, `a_b`) stop the guard from starting. |
 | `GUARD_MODE` | `flag` | `flag`: forward everything, report findings. `block`: refuse a request whose verdict is `block` with a 403, and withhold that content when it comes again. A streamed answer is held until it has ended and then passed on or refused; in flag mode it streams through. |
-| `GUARD_TRUST_USER` | — | `1`: in block mode, what the user typed is reported but never refused. For an agent only its owner can talk to (Hermes's platform allowlist): the owner is not the threat, what reaches the agent from outside is. Tool results, memory, skills, cron jobs, subagent tasks and the agent's own commands are still refused. |
+| `GUARD_TRUST_USER` | — | `1`: in block mode, what the user typed and the system prompt are reported but never refused. For an agent only its owner can talk to (Hermes's platform allowlist): the owner is not the threat, what reaches the agent from outside is. Tool results, memory, skills, cron jobs, subagent tasks and the agent's own commands are still refused. |
 | `GUARD_POLICY` | — | Path to a JSON file overriding engine settings (`PolicySettings` in [`policy_engine.ts`](supabase/functions/_shared/policy_engine.ts)), mounted into the container; e.g. `{"pii_action": "sanitize"}` masks personal data and secrets before they reach the provider. `{"enable_tool_governance": true, "tool_denylist": ["send_email"]}` makes a call to a listed tool a `block` finding; `tool_allowlist` does the same for every tool not listed. |
 | `GUARD_PORT` | `8787` | Port. `compose.yml` publishes it on the host's `127.0.0.1` only. |
 | `GUARD_HOST` | `127.0.0.1` | Address the process listens on. The container image sets `0.0.0.0` — inside the container, so the port can be published; set it outside Docker only if other hosts are to reach the guard, which carries your provider keys and asks callers for nothing. |
@@ -251,7 +264,7 @@ dashboard shows.
 
 ```bash
 cd guard
-deno task test          # 27 tests: extraction, agent rules, routes, end to end against fake providers
+deno task test          # 56 tests: extraction, agent rules, routes, end to end against fake providers
 ```
 
 The engine's own tests: `cd supabase/functions/_shared && deno test --allow-net --allow-read --allow-env --no-check`.
@@ -267,15 +280,18 @@ git fetch upstream
 git checkout upstream/main -- $(git ls-files supabase/functions/_shared)
 ```
 
-Then run both test suites before committing. CI (`.github/workflows/guard.yml`)
+`policy_engine.ts` carries changes of this fork, each marked
+`dlprevent-guard:` — carry them over after taking upstream's file. Then run
+both test suites before committing. CI (`.github/workflows/guard.yml`)
 runs them and builds the container.
 
 ## Credits and license
 
 The detection engine — everything under
 [`supabase/functions/_shared/`](supabase/functions/_shared) — is **AnveGuard** by
-[ANVE-AI](https://github.com/ANVE-AI/prompt-sentinel-flow), unmodified,
-under the [Apache License 2.0](LICENSE). Its patterns, heuristics, tool-result
+[ANVE-AI](https://github.com/ANVE-AI/prompt-sentinel-flow), under the
+[Apache License 2.0](LICENSE). `policy_engine.ts` is modified here (see
+NOTICE; each change is marked `dlprevent-guard:` in the file). Its patterns, heuristics, tool-result
 scanner, PII detection and threat-intelligence feed do the actual work here;
 their tests are in `policy_engine_attacks.test.ts`.
 

@@ -1,5 +1,8 @@
 // Layered, intent-aware policy evaluator for AnveGuard.
 //
+// Modified by dlprevent-guard (Apache-2.0 §4(b)): each change is marked
+// `dlprevent-guard:` in this file; see NOTICE.
+//
 // The evaluator runs four pluggable layers in order:
 //   1. Normalizer        — strip zero-width, decode b64/url, fold leetspeak.
 //   2. Pattern layer     — keywords (legacy), regex rules, structural detectors.
@@ -1660,11 +1663,37 @@ const RETRIEVED_OVERRIDE_RE = /\b(?:ignore|disregard|forget|override|bypass)\s+(
 // Imperative addressed to the model from inside a tool description /
 // retrieved doc. "You must …", "before any call …", "always include …",
 // the <IMPORTANT> tag pattern from Invariant Labs's 2025 MCP advisory.
-const TO_MODEL_IMPERATIVE_RE = /\b(?:you\s+(?:must|should|always|need\s+to|have\s+to)|before\s+(?:any\s+|each\s+|every\s+)?(?:call|use|invocation|response)|always\s+(?:call|read|include|append|send|forward|copy|bcc|cc)|first\s+(?:call|execute|run|read|fetch))\b|<\s*(important|system|sys|admin|internal|note)\s*>[\s\S]{20,}<\s*\/\s*\1\s*>/gi;
+// dlprevent-guard: the tag form moved out of the regex into `hasImportantTag`
+// — `<(tag)>[\s\S]{20,}</\1>` backtracks from every opening, and a tool
+// result of 60 KB of `<note>` held the guard for seconds.
+const TO_MODEL_IMPERATIVE_RE = /\b(?:you\s+(?:must|should|always|need\s+to|have\s+to)|before\s+(?:any\s+|each\s+|every\s+)?(?:call|use|invocation|response)|always\s+(?:call|read|include|append|send|forward|copy|bcc|cc)|first\s+(?:call|execute|run|read|fetch))\b/gi;
+
+/** `<important>…</important>` (or system, sys, admin, internal, note) around
+ *  at least 20 characters. Some pair exists exactly when the first opening
+ *  and the last closing of one tag are 20 apart, so this is linear. */
+export function hasImportantTag(text: string): boolean {
+  for (const tag of ["important", "system", "sys", "admin", "internal", "note"]) {
+    const open = new RegExp(`<\\s*${tag}\\s*>`, "i").exec(text);
+    if (!open) continue;
+    const close = new RegExp(`<\\s*\\/\\s*${tag}\\s*>`, "gi");
+    let last = -1;
+    for (let m = close.exec(text); m; m = close.exec(text)) last = m.index;
+    if (last - (open.index + open[0].length) >= 20) return true;
+  }
+  return false;
+}
+
+function toModelImperative(text: string): boolean {
+  TO_MODEL_IMPERATIVE_RE.lastIndex = 0;
+  return TO_MODEL_IMPERATIVE_RE.test(text) || hasImportantTag(text);
+}
 
 // Markdown image exfil — `![](url?leak={{data}})` and reference-style
 // images with templated query strings or unknown hosts. EchoLeak vector.
-const MD_IMG_RE = /!\[[^\]]*\]\(([^)]+)\)|!\[[^\]]*\]\[([^\]]+)\]/g;
+// dlprevent-guard: bounded, and the inline form no longer waits for its `)`
+// — unbounded repeats rescanned the rest of the text from every `![`. The
+// URL's start carries the host and the template; past 4000 it is long anyway.
+const MD_IMG_RE = /!\[[^\]\n]{0,1000}\]\(([^)\n]{1,4000})|!\[[^\]\n]{0,1000}\]\[([^\]\n]{1,1000})\]/g;
 const URL_TEMPLATE_RE = /\{\{[^}]+\}\}|\$\{[^}]+\}|\[(?:INSERT|DATA|LEAK|CONVERSATION|MESSAGES?|SECRETS?|CONTEXT|HISTORY)[_A-Z]*\]/i;
 
 // Hidden HTML patterns — display:none / visibility:hidden / aria-hidden /
@@ -1739,8 +1768,7 @@ export function evaluateRetrieved(
   }
 
   // -- 2. Imperative-to-model in tool description or RAG chunk --
-  TO_MODEL_IMPERATIVE_RE.lastIndex = 0;
-  if (TO_MODEL_IMPERATIVE_RE.test(text)) {
+  if (toModelImperative(text)) {
     // In tool descriptions / MCP results this is decisive (Invariant Labs
     // 2025 tool-poisoning advisory). In RAG/web it's flag-grade since
     // docs sometimes contain instructions for humans.
@@ -1796,9 +1824,8 @@ export function evaluateRetrieved(
     // language — pure decorative aria-hidden=true on icons is benign.
     HIDDEN_CSS_RE.lastIndex = 0;
     RETRIEVED_OVERRIDE_RE.lastIndex = 0;
-    TO_MODEL_IMPERATIVE_RE.lastIndex = 0;
     if (RETRIEVED_OVERRIDE_RE.test(text) ||
-        TO_MODEL_IMPERATIVE_RE.test(text)) {
+        toModelImperative(text)) {
       out.push({
         layer: "injection",
         verdict: "block",

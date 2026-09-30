@@ -1,8 +1,9 @@
 // dlprevent-guard: AnveGuard's policy engine as a self-contained proxy
 // between an AI agent (Hermes) and its model provider.
 //
-// What is kept from upstream: the engine in supabase/functions/_shared,
-// untouched, so rule updates can be taken over as they are. What is not:
+// What is kept from upstream: the engine in supabase/functions/_shared, with
+// the few changes marked `dlprevent-guard:` in it, so rule updates can be
+// taken over file by file. What is not:
 // Supabase, Clerk, the Lovable classifier, the dashboard, the request log.
 // This proxy stores nothing but verdicts, and a verdict carries rule names
 // and reasons — never the prompt, the answer or the matched text.
@@ -30,6 +31,7 @@ import {
   DEFAULT_SETTINGS,
   evaluate,
   evaluateRetrieved,
+  hasImportantTag,
   type LayerVerdict,
   type PolicySettings,
   type Verdict,
@@ -208,11 +210,53 @@ function systemSlots(body: Json): Slot[] {
 /** What Hermes puts into a user message besides what the person typed: the
  *  recalled memory its memory hook appends, a skill's body up to the
  *  instruction that goes with it, a cron job's script output. */
-const DATA = new RegExp(
-  "(<memory-context>[\\s\\S]*?</memory-context>" +
-    '|\\[IMPORTANT: The user has invoked the "[^"\\n]+" skill[\\s\\S]*?(?=\\nThe user has provided the following instruction alongside the skill invocation: |$)' +
-    "|## Script (?:Output|Error)\\n[^\\n]*\\n\\n```\\n[\\s\\S]*?\\n```)",
-);
+const MEMORY_OPEN = "<memory-context>";
+const MEMORY_CLOSE = "</memory-context>";
+const SKILL = /\[IMPORTANT: The user has invoked the "[^"\n]+" skill/g;
+const SKILL_END = "\nThe user has provided the following instruction alongside the skill invocation: ";
+const SCRIPT = /## Script (?:Output|Error)\n[^\n]*\n\n```\n/g;
+
+/**
+ * The text split into what was typed and Hermes's blocks: even indices typed,
+ * odd ones a block. By hand, not with one lazy regex, for two reasons:
+ * - The memory block runs to the **last** closing tag. Hermes appends it at
+ *   the end, and a recalled memory that contains `</memory-context>` itself
+ *   must not turn the rest of it into what the person typed — which
+ *   `GUARD_TRUST_USER` never refuses.
+ * - Linear time. A lazy `[\s\S]*?` behind many openings with no end rescans
+ *   the rest of the text from each one.
+ */
+export function splitHermes(text: string): string[] {
+  const parts: string[] = [];
+  let pos = 0;
+  let scriptsLeft = true;
+  const memoryEnd = text.lastIndexOf(MEMORY_CLOSE);
+  for (;;) {
+    const found: [number, number][] = [];
+    const m = text.indexOf(MEMORY_OPEN, pos);
+    if (m >= 0 && memoryEnd > m) found.push([m, memoryEnd + MEMORY_CLOSE.length]);
+    SKILL.lastIndex = pos;
+    const s = SKILL.exec(text);
+    if (s) {
+      const end = text.indexOf(SKILL_END, s.index);
+      found.push([s.index, end >= 0 ? end : text.length]);
+    }
+    if (scriptsLeft) {
+      SCRIPT.lastIndex = pos;
+      const c = SCRIPT.exec(text);
+      const end = c ? text.indexOf("\n```", c.index + c[0].length) : -1;
+      if (c && end >= 0) found.push([c.index, end + 4]);
+      // No closing fence after this one means none after any later one.
+      else scriptsLeft = false;
+    }
+    if (found.length === 0) break;
+    const [start, end] = found.reduce((a, b) => (b[0] < a[0] ? b : a));
+    parts.push(text.slice(pos, start), text.slice(start, end));
+    pos = end;
+  }
+  parts.push(text.slice(pos));
+  return parts;
+}
 
 const originOf = (block: string) =>
   block.startsWith("<memory-context>") ? "memory-context" : block.startsWith("## Script") ? "cron-script" : `skill:${block.match(/"([^"]+)"/)?.[1]}`;
@@ -241,7 +285,7 @@ function userSlots(text: string, write: (text: string) => void, child = false): 
     return [{ piece: { direction: "tool_result", text: text.replace(TURN_LABEL, "$1"), origin: "compaction" }, set: write }];
   }
   // Odd indices are Hermes's blocks, even ones what the person typed.
-  const parts = text.split(DATA);
+  const parts = splitHermes(text);
   const put = (i: number, t: string) => {
     parts[i] = t;
     write(parts.join(""));
@@ -332,11 +376,12 @@ export function answerOf(resp: Json): { text: string; calls: string; tools: stri
   const prose: string[] = [];
   const calls: string[] = [];
   const tools: string[] = [];
-  const msg = (resp.choices as Json[] | undefined)?.[0]?.message as Json | undefined;
-  if (msg) {
+  // Every choice (`n` > 1), and the legacy `function_call` beside `tool_calls`.
+  for (const choice of (Array.isArray(resp.choices) ? resp.choices : []) as Json[]) {
+    const msg = choice?.message as Json | undefined;
+    if (!msg) continue;
     prose.push(textOf(msg.content));
-    for (const tc of (msg.tool_calls as Json[] | undefined) ?? []) {
-      const f = tc.function as Json | undefined;
+    for (const f of [...((msg.tool_calls as Json[] | undefined) ?? []).map((tc) => tc.function as Json | undefined), msg.function_call as Json | undefined]) {
       if (str(f?.name)) tools.push(str(f?.name)!);
       if (args(f?.arguments)) calls.push(args(f?.arguments)!);
     }
@@ -366,7 +411,8 @@ export class StreamCollector {
   tools: string[] = [];
 
   push(chunk: string) {
-    const lines = (this.rest + chunk).split("\n");
+    // The SSE spec ends a line with CRLF, LF or a lone CR.
+    const lines = (this.rest + chunk).split(/\r\n|\r|\n/);
     this.rest = lines.pop() ?? "";
     for (const line of lines) this.line(line.trim());
   }
@@ -384,11 +430,11 @@ export class StreamCollector {
       return; // the rest of the event may follow on the next data: line
     }
     this.data = [];
-    const delta = (ev.choices as Json[] | undefined)?.[0]?.delta as Json | undefined;
-    if (delta) {
+    for (const choice of (Array.isArray(ev.choices) ? ev.choices : []) as Json[]) {
+      const delta = choice?.delta as Json | undefined;
+      if (!delta) continue;
       if (str(delta.content)) this.parts.push(str(delta.content)!);
-      for (const tc of (delta.tool_calls as Json[] | undefined) ?? []) {
-        const f = tc.function as Json | undefined;
+      for (const f of [...((delta.tool_calls as Json[] | undefined) ?? []).map((tc) => tc.function as Json | undefined), delta.function_call as Json | undefined]) {
         if (str(f?.name)) this.tools.push(str(f?.name)!);
         if (args(f?.arguments)) this.call(args(f?.arguments)!);
       }
@@ -399,7 +445,11 @@ export class StreamCollector {
       if (str(d.partial_json)) this.call(str(d.partial_json)!);
     }
     const block = ev.content_block as Json | undefined;
-    if (ev.type === "content_block_start" && block?.type === "tool_use" && str(block.name)) this.tools.push(str(block.name)!);
+    if (ev.type === "content_block_start" && block?.type === "tool_use") {
+      if (str(block.name)) this.tools.push(str(block.name)!);
+      // The Anthropic SDK may send the whole input here instead of as deltas.
+      if (block.input && typeof block.input === "object" && Object.keys(block.input).length > 0) this.call(JSON.stringify(block.input));
+    }
   }
 
   private call(s: string) {
@@ -496,7 +546,7 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
     // A tool result is no different: a web page on babies and screens said
     // "you should turn the TV off" to its reader and was refused. It is
     // still reported: a page need not wrap its orders in a tag.
-    const tagged = IMPORTANT_TAG.test(p.text);
+    const tagged = hasImportantTag(p.text);
     if (def && !tagged) found = found.filter((l) => l.rule !== "retrieved_imperative_to_model");
     // A search for running shoes on galaxus.ch was refused: the shop's
     // product images sit on hosts no allowlist knows. A fixed image URL in a
@@ -533,10 +583,9 @@ const ORDINARY_NAME = /^(?:Sydney|STAN|DUDE|Cody|Machiavelli)$/;
 
 const HOUSEKEEPING = /^(?:delete|drop|erase|wipe|skip|override)\b[\s\S]*\b(?:context|memory)$/i;
 
-const TEMPLATED_IMAGE = /!\[[^\]]*\]\([^)]*(?:\{\{[^}]+\}\}|\$\{[^}]+\}|\[(?:INSERT|DATA|LEAK|CONVERSATION|MESSAGES?|SECRETS?|CONTEXT|HISTORY)[_A-Z]*\])/i;
-
-const IMPORTANT_TAG =/<\s*(important|system|sys|admin|internal|note)\s*>[\s\S]{20,}<\s*\/\s*\1\s*>/i;
-
+// Bounded repeats: with `[^)]*`, many `![](` openings and no `)` rescan the
+// rest of the text from each one.
+const TEMPLATED_IMAGE = /!\[[^\]\n]{0,1000}\]\([^)\n]{0,2000}?(?:\{\{[^}]{1,200}\}\}|\$\{[^}]{1,200}\}|\[(?:INSERT|DATA|LEAK|CONVERSATION|MESSAGES?|SECRETS?|CONTEXT|HISTORY)[_A-Z]{0,50}\])/i;
 /** Which layer's reason an alert should lead with. The reader sees the
  *  first reason only, and upstream lists the vaguest first: "ignore all
  *  previous instructions" came out as "Persona-bypass language requesting an
@@ -598,9 +647,10 @@ export interface Config {
    *  from before there were routes, `/v1/…` straight to one provider. */
   fallback?: Upstream;
   mode: Mode;
-  /** In block mode, only report what the user typed, never refuse it
-   *  (`GUARD_TRUST_USER`). For an agent only its owner talks to: the owner
-   *  is not who the guard is for, what reaches the agent from outside is. */
+  /** In block mode, only report what the user typed and the system prompt,
+   *  never refuse them (`GUARD_TRUST_USER`). For an agent only its owner
+   *  talks to: the owner is not who the guard is for, what reaches the agent
+   *  from outside is. */
   trustUser?: boolean;
   log: string;
   settings: PolicySettings;
@@ -649,6 +699,53 @@ export function route(cfg: Config, pathname: string): { name?: string; url: stri
 /** Paths whose bodies are scanned. Everything else passes through as is. */
 const SCANNED = ["/v1/chat/completions", "/chat/completions", "/v1/messages"];
 
+/** Other endpoints that make the model answer: the Responses API, legacy
+ *  completions, batches. Not scanned, so block mode refuses them instead of
+ *  letting them past. */
+const UNSCANNED_MODEL = /\/(?:responses|completions|batches)(?:\/|$)/;
+
+/** A path as the provider will read it: `//`, a trailing `/` and `%2F`
+ *  must not step around `SCANNED`. */
+export function normalPath(path: string): string {
+  let p = path;
+  try {
+    p = decodeURIComponent(path);
+  } catch { /* stays as it came */ }
+  return p.replace(/\/{2,}/g, "/").replace(/(.)\/+$/, "$1");
+}
+
+/** The most the guard reads of one request. Far above a long agent context;
+ *  what is larger is refused in block mode, not read into memory. */
+// ponytail: one fixed cap; a setting if an agent ever sends more.
+const MAX_BODY = 32 * 1024 * 1024;
+
+/** The body as text, or undefined when it is larger than `MAX_BODY`. */
+async function readCapped(req: Request): Promise<string | undefined> {
+  if (Number(req.headers.get("content-length") ?? 0) > MAX_BODY) return undefined;
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for await (const c of req.body ?? []) {
+    size += c.length;
+    if (size > MAX_BODY) return undefined;
+    chunks.push(c);
+  }
+  const all = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) {
+    all.set(c, at);
+    at += c.length;
+  }
+  return new TextDecoder().decode(all);
+}
+
+/** Refused before scanning: what the guard cannot read cannot pass in block mode. */
+function unscannable(message: string, anthropic: boolean, status = 403): Response {
+  const body = anthropic
+    ? { type: "error", error: { type: "permission_error", message: `dlprevent-guard: ${message}` } }
+    : { error: { message: `dlprevent-guard: ${message}`, type: "guard_blocked", code: "not_scanned" } };
+  return Response.json(body, { status });
+}
+
 export function handler(cfg: Config, writeLog: (r: Record) => Promise<void>) {
   const refused = new Map<string, string>();
   /** Tool definitions and system prompts by hash: "" when scanned and let
@@ -668,6 +765,10 @@ export function handler(cfg: Config, writeLog: (r: Record) => Promise<void>) {
   return async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     if (url.pathname === "/healthz") return new Response("ok\n");
+    // An agent sends no Origin; a browser does, on every POST. Without this
+    // a web page open on the same machine could spend the provider key the
+    // guard carries, through 127.0.0.1 or a rebound DNS name.
+    if (req.headers.has("origin")) return Response.json({ error: { message: "dlprevent-guard: requests from a browser are refused", type: "guard_forbidden" } }, { status: 403 });
     const to = route(cfg, url.pathname);
     if (!to) {
       const names = Object.keys(cfg.routes).map((n) => `/${n}/`).join(", ");
@@ -683,15 +784,31 @@ export function handler(cfg: Config, writeLog: (r: Record) => Promise<void>) {
       if (anthropic) headers.set("x-api-key", to.key);
     }
 
-    if (req.method !== "POST" || !SCANNED.includes(to.path)) {
+    const block = cfg.mode === "block";
+    const path = normalPath(to.path);
+    if (req.method !== "POST" || !SCANNED.includes(path)) {
+      if (block && req.method === "POST" && UNSCANNED_MODEL.test(path)) {
+        return unscannable(`${path} is not scanned; use /v1/chat/completions or /v1/messages`, anthropic);
+      }
       return relay(await fetch(target, { method: req.method, headers, body: req.body, redirect: "manual" }));
     }
+    // A compressed body reads as garbage; in block mode it is not let past.
+    const encoded = (req.headers.get("content-encoding") ?? "identity").toLowerCase() !== "identity";
+    if (block && encoded) return unscannable("a compressed request body cannot be scanned", anthropic);
 
-    const raw = await req.text();
+    const raw = await readCapped(req);
+    if (raw === undefined) {
+      if (block) return unscannable(`request body larger than ${MAX_BODY} bytes`, anthropic, 413);
+      console.error("guard: request body too large to scan, refused");
+      return Response.json({ error: { message: "dlprevent-guard: request body too large", type: "guard_too_large" } }, { status: 413 });
+    }
     let body: Json;
     try {
       body = JSON.parse(raw);
     } catch {
+      // The provider may read what JSON.parse does not (`NaN`, for one).
+      if (block) return unscannable("the request body is not JSON the guard can read", anthropic, 400);
+      console.error("guard: request body not JSON, forwarded unscanned");
       return relay(await fetch(target, { method: "POST", headers, body: raw, redirect: "manual" }));
     }
     const model = str(body.model);
@@ -775,8 +892,24 @@ export function handler(cfg: Config, writeLog: (r: Record) => Promise<void>) {
     }
 
     const text = await resp.text();
+    let parsed: Json | undefined;
     try {
-      const answer = answerOf(JSON.parse(text));
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = undefined;
+    }
+    if (parsed === undefined) {
+      // A stream under another content type is still a stream.
+      if (/^data:/m.test(text)) {
+        const rec = await scanSse(text, cfg, model, to.name, write, true);
+        if (rec?.action === "blocked") return refusal(rec, anthropic);
+        return relay(resp, text);
+      }
+      if (block) return unscannable("the provider's answer is not JSON the guard can read", anthropic, 502);
+      return relay(resp, text);
+    }
+    try {
+      const answer = answerOf(parsed);
       if (answer.text) {
         const p: Piece = { direction: "output", text: answer.text, calls: answer.calls };
         const { verdict, layers } = await judge(p, cfg.settings, { model, tools: answer.tools });
