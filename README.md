@@ -41,6 +41,9 @@ answer goes through it, and it reports what does not belong there:
 - **Commands that carry data out** in the model's answer: uploads to
   data-drop services, credential files, reverse shells, downloads piped into
   a shell, data hidden in an image link.
+- **Commands that destroy** — the disk wiped, the guard itself stopped or
+  gone around — and the ones an operator wants to hear about: a dropped
+  database, a force push, the firewall off, a new cron job.
 
 Findings go to [DLPrevent](https://github.com/dlprevent-dev/dlprevent),
 which shows them as alerts next to what it sees on the host: which tool call
@@ -65,9 +68,12 @@ one layer; the host-side DLPrevent agent is the other.
   prompt and no answer; a finding carries rule names and reasons, never the
   text they were found in — and the name of the tool it came from, which an
   MCP server chooses: cut to 64 characters, letters, digits and `_.:@/+-`.
-- **Talks to nothing but your provider.** Everything it needs is fetched when
-  the image is built.
-- **Flag mode by default**: forward everything, report findings. Block mode
+- **Talks to nothing but your provider** — and the classifier container
+  next to it, if you start that one. Everything the guard needs is fetched
+  when its image is built; the classifier fetches its model on its first
+  start.
+- **Flag mode by default**: forward everything, report findings — except
+  what is over a [limit](#limits) you set. Block mode
   answers a refused request with a 403 in the API shape the agent expects.
   The agent keeps the refused content in its history and sends it again with
   the next turn; from then on the guard replaces it with a short note
@@ -83,17 +89,26 @@ older than the guard), so a finding is reported once, not on every later
 turn. The system prompt and the tool definitions the agent sends along are
 scanned the first time each one comes, for the same reason. Then the model's
 answer, including the tool calls it asks for, streamed or not. A piece the
-guard cannot scan is reported (`guard_scan_failed`), and the rest of the
-request is still scanned.
+guard could not scan is a `block` finding of its own (`guard_scan_failed`),
+so that making the scanner fail is not a way past it. Block mode treats it
+like any other: refused — a tool description or system prompt withheld, and
+with `GUARD_TRUST_USER` what the user typed only reported. The rest of the
+request is still scanned. A streamed answer that breaks off in flag mode is
+reported the same way.
 
 | Direction | Refused in block mode | Only reported | By |
 |---|---|---|---|
-| user's message | prompt injection and jailbreak patterns; smuggled text (homoglyphs, bidi characters, adversarial suffixes, many-shot jailbreaks); a secret in key shape — an API key pasted into the chat | personal data, multi-turn patterns (role-play escalation, priming), known attack signatures | AnveGuard engine |
-| tool result | instructions hidden in data: override phrases, hidden HTML and HTML comments, invisible tag characters, references to other tools, markdown-image exfiltration with a placeholder; dangerous Python, SQL writes; imperatives aimed at the model in an `<IMPORTANT>`-style block, and poisoned-authority claims when they address a tool | the same imperatives, image links and claims otherwise, override phrases worded as memory housekeeping, personal data and secrets, known signatures | AnveGuard engine — without its prompt heuristics, which mistake hashes, base64 and code for attacks |
-| system prompt | as tool definitions — an agent builds it from memory it wrote itself and from context files in the repository it works in | — | AnveGuard engine, as data; with `GUARD_TRUST_USER` only reported |
-| tool definitions | instructions in a tool's description or its parameters' descriptions: override phrases, `<IMPORTANT>` blocks, references to other tools (*always bcc …*), known poisoning signatures | — | AnveGuard engine, as MCP tool descriptions — without its prompt heuristics and PII check, and without the plain *you must …* rule, which every second ordinary description sets off |
-| model's answer | a secret in key shape, links to private or loopback addresses, image links that carry data | personal data | AnveGuard engine + [`guard/agent_rules.ts`](guard/agent_rules.ts) |
-| tool calls in the answer | data-drop services, credential files, a hidden file in a home directory, a `.env` or the environment sent to any host (also over `ssh`, `aws s3`, `gh gist`, Node's `https`, a DNS lookup), file uploads to another host (`curl -T`, `curl -d @…` or `"$(…)"`, `scp`, `rsync`) — to loopback or a `GUARD_UPLOAD_HOSTS` host only reported, and refused whenever the guard cannot tell where it goes; reverse shells, a base64 blob decoded into a shell — also when quotes or `$'\x..'` escapes split the words | a download piped into a shell | [`guard/agent_rules.ts`](guard/agent_rules.ts) — in what the model is about to *run*, not in what it says: a model that warns you about an attack names it too |
+| user's message | prompt injection and jailbreak patterns, the override phrases among them also in German, French and Italian and with their letters spaced out (`i g n o r e`); smuggled text (homoglyphs, bidi characters, adversarial suffixes, many-shot jailbreaks); a secret in key shape — an API key pasted into the chat | personal data, known attack signatures, and patterns over several turns of what the person typed (a jailbreak persona that keeps coming back, priming, instructions flipped back and forth, encoded text growing from turn to turn, a sudden very long turn) — on the turn that completes one, not on every turn after | AnveGuard engine + [`guard/languages.ts`](guard/languages.ts) |
+| tool result | instructions hidden in data: override phrases (English, German, French, Italian), hidden HTML and HTML comments, invisible tag characters, references to other tools, markdown-image exfiltration with a placeholder; dangerous Python, SQL writes; imperatives aimed at the model in an `<IMPORTANT>`-style block, and poisoned-authority claims when they address a tool | the same imperatives, image links and claims otherwise, override phrases worded as memory housekeeping, personal data and secrets, known signatures | AnveGuard engine — without its prompt heuristics, which mistake hashes, base64 and code for attacks — + [`guard/languages.ts`](guard/languages.ts) |
+| system prompt | as tool definitions — an agent builds it from memory it wrote itself and from context files in the repository it works in | — | AnveGuard engine, as data, + [`guard/languages.ts`](guard/languages.ts); with `GUARD_TRUST_USER` only reported |
+| tool definitions | instructions in a tool's description or its parameters' descriptions: override phrases, `<IMPORTANT>` blocks, references to other tools (*always bcc …*), known poisoning signatures | a definition that changed since the guard let it through under the same name (`tool_definition_changed`, the rug pull), once per change | AnveGuard engine, as MCP tool descriptions — without its prompt heuristics and PII check, and without the plain *you must …* rule, which every second ordinary description sets off — + [`guard/languages.ts`](guard/languages.ts) |
+| model's answer | a secret in key shape, links to private or loopback addresses, image links that carry data | personal data; 60 characters of the system prompt word for word (`system_prompt_leak`) — an agent's system prompt holds its memory and context files, which it quotes in ordinary work; an image whose address carries a query, data shorter than the refused kind (`markdown_image_query`) | AnveGuard engine + [`guard/agent_rules.ts`](guard/agent_rules.ts); the system prompt in [`guard/server.ts`](guard/server.ts) |
+| tool calls in the answer | data-drop services, credential files, a hidden file in a home directory, a `.env` or the environment sent to any host (also over `ssh`, `aws s3`, `gh gist`, Node's `https`, a DNS lookup), file uploads to another host (`curl -T`, `curl -d @…` or `"$(…)"`, `scp`, `rsync`) — to loopback or a `GUARD_UPLOAD_HOSTS` host only reported, and refused whenever the guard cannot tell where it goes; reverse shells, a base64 blob decoded into a shell; `rm -r` on the root, a home, a system directory or a data mount itself (also after a `cd` into it), a disk overwritten (`dd`, `mkfs`, a redirect); the guard stopped, its verdict log, policy or `GUARD_…` settings changed, its `.env` with the provider keys read, or Hermes's config pointed past it — also when quotes or `$'\x..'` escapes split the words | a download piped into a shell; a database or table dropped, a force push, `chmod 777`, the machine shut down; a firewall, auditing or the shell history switched off; a cron job or systemd unit installed | [`guard/agent_rules.ts`](guard/agent_rules.ts) — in what the model is about to *run*, not in what it says: a model that warns you about an attack names it too |
+
+An **image, a sound or a file's bytes** in what is new — a photo the user
+sent, a screenshot a tool returned, a PDF — is read by the model but not by
+the guard: reported once per request that brings it (`unscanned_content`,
+`Not scanned: 1 image_url`), never refused.
 
 A refused **tool description** or **system prompt** does not end the
 conversation: the guard replaces it with a note telling the model it was
@@ -107,6 +122,8 @@ word. In flag mode it streams through and is scanned afterwards.
 [DLPrevent → docs/HERMES.md](https://github.com/dlprevent-dev/dlprevent/blob/main/docs/HERMES.md#check-it-works)
 has a harmless test. A policy file (`GUARD_POLICY`) moves findings between
 the two columns: `"pii_action": "block"`, `"injection_action": "flag"`.
+With `"sanitize"` block mode sends the piece on with the finding masked
+(`[REDACTED:email]`, `[redacted]`) instead of refusing it.
 It also says which tools the model may call — see [Configuration](#configuration).
 
 Supported APIs: OpenAI chat completions (`/v1/chat/completions`) and
@@ -122,13 +139,35 @@ the key the guard carries. A redirect from the provider is passed back to the
 agent, never followed by the guard.
 
 Known gaps: the assistant turns an agent sends back as history are not
-scanned (they were scanned when the model gave them), and a person who types
-Hermes's own markers (`<memory-context>`, a skill header) gets that text
-scanned as data, without the prompt heuristics — relevant only when the
-person typing is not trusted. The tool-call rules read one answer at a time:
-a secret read in one turn and sent in a later one is not put together, and a
-command assembled from variables or `eval` is not unfolded — only quoting is.
-Hex-encoded data in an image path passes.
+scanned (they were scanned when the model gave them). A person who types
+Hermes's own markers (`<memory-context>`, a skill header, a cron job's or a
+compaction's opening line) gets that text scanned as data: with the injection
+patterns and — unless `GUARD_TRUST_USER` is set — a check for text turned
+around with direction overrides, but without the prompt heuristics, which
+real memory and script output set off. A gibberish suffix or look-alike
+letters between markers pass.
+
+The override phrases in German, French and Italian are a list of phrasings,
+kept no stricter than the engine is in English: an imperative about *all*
+earlier instructions or the model's own. A paraphrase, another language,
+swapped letters (`ignroe`) or words spaced exactly like their letters pass,
+and only a [trained classifier](#trained-classifier) answers those. As in English, a person taking back their own instructions
+(*vergiss die vorherigen Anweisungen, ich habe mich vertan*) is refused.
+
+The tool-call rules read one answer at a time, and a shell command by its
+words. A secret read in one turn and sent in a later one is not put together;
+a command assembled from variables or `eval` is not unfolded — only quoting
+is. `rm -rf ~/Documents` passes: only the root, a home, a system directory or
+a data mount itself counts as a wipe. The guard is known by its name, its
+port, its files and a `cd` into its directory on the same line; stopped any
+other way (`docker compose down` in a shell that is already there) it is not
+recognised, and neither is a file tool that writes a cron file or Hermes's
+config without naming a command. A link in the answer counts as carrying
+data only with a long query (over 80 characters, upstream's `url_exfil`), a
+markdown image with any query; an `<img>` tag, a reference-style image or a
+`//host` address without a scheme only when the data in it is long. What an agent may not do at all belongs in
+`tool_allowlist`, and keeping the provider keys in the guard is what makes a
+way around it end in a 401. Hex-encoded data in an image path passes.
 
 ## Deploy
 
@@ -177,6 +216,83 @@ as the default for `/v1/…`, so an agent already pointed at the guard keeps
 working. A finding names its route (`"upstream":"openrouter"`); the startup
 log lists every route and whether the guard carries its key.
 
+### Limits
+
+An agent in a loop, or one talked into one, spends without end (OWASP LLM10).
+In `.env`:
+
+```bash
+GUARD_MODELS=deepseek-*,gpt-4o-mini     # the models it may ask for
+GUARD_MAX_TOKENS=8192                   # the most output one answer may ask for
+GUARD_RATE=60                           # requests a minute, for the whole guard
+```
+
+These hold in both modes: a limit you set is not a guess that may be wrong.
+Another model is refused with a 403 (`model_not_allowed`), a larger
+`max_tokens` or `max_completion_tokens` is lowered to the limit, and a
+request over the rate gets a 429 with `Retry-After`, which the agent's SDK
+waits out — reported once a minute (`rate_limited`). OpenRouter's fallback
+list (`models`) is checked like `model`. With `GUARD_MODELS` or
+`GUARD_MAX_TOKENS` set, flag mode too refuses what the guard cannot check:
+`/v1/responses`, a compressed body, one that is not JSON. A request that sets
+no output limit keeps the provider's, and `n` — several answers at once — is
+not limited. The minute is the clock's: across its turn up to twice the rate
+gets through.
+
+### Trained classifier
+
+The word lists catch the phrasings they know. A trained model catches the
+rest — paraphrases, swapped letters, other languages — and makes mistakes of
+its own, so it starts in shadow mode: it reports, it refuses nothing.
+
+```bash
+docker compose --profile classifier up -d --build
+```
+
+and in the policy file (`GUARD_POLICY`, see [Configuration](#configuration)):
+
+```json
+{"enable_trained_classifier": true, "classifier_endpoint_url": "http://classifier:8000/"}
+```
+
+Every piece but the model's answer then goes through it as well: what the
+user typed, tool results, tool definitions, the system prompt — skipped
+where another rule already refuses. A hit is a `trained_classifier` finding
+with its score. Read the findings for a while; when they hold, add
+`"classifier_shadow_mode": false` and it refuses (`"classifier_action":
+"flag"` to keep it a report). `"classifier_threshold"` (default `0.8`) is
+the score from which it counts.
+
+The default model is
+[ProtectAI's DeBERTa](https://huggingface.co/protectai/deberta-v3-base-prompt-injection-v2),
+English only, ungated. Measured behind the guard: it caught every attack
+tried — swapped letters (`ignroe`), *SYSTEM OVERRIDE* in a tool result, a
+German and a French override, an order in an HTML comment — and let every
+ordinary English sentence through. But it takes much ordinary German,
+French and Italian for an attack: 4 of 20 ordinary sentences scored over
+0.8 (*Kannst du mir die Rechnung vom März als PDF schicken?* scored 0.999).
+For an agent people talk to in those languages, leave it in shadow mode or
+use Meta's multilingual
+[Llama Prompt Guard 2](https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-86M) —
+not tried here, since it is gated:
+accept its licence on Hugging Face, then `CLASSIFIER_MODEL=meta-llama/Llama-Prompt-Guard-2-86M`
+and `HF_TOKEN=hf_…` in `.env`. The model is fetched on the first start into
+the `classifier-models` volume; after that the container needs no network.
+It reads the first 512 tokens of each piece (the engine hands it 4,000
+characters), one piece at a time, on the CPU: 130–300 ms per new
+piece on an 11-core ARM machine; the image is 1.2 GB, the model about 0.7 GB more. An attack behind enough padding is past what it
+reads. It is not published on the host — only the guard reaches it.
+
+When the classifier cannot be reached, the guard goes on without it and
+says so only on stderr (`trained classifier error` in `docker compose logs
+guard`): it is a layer on top of the others, not one they rely on. One that
+takes the request and does not answer holds a piece at most 5 seconds; then
+the piece counts as not scanned (`guard_scan_failed`), refused in block mode.
+
+Out of shadow mode a false positive in the system prompt withholds the whole
+system prompt, as any finding there does; with `GUARD_TRUST_USER` the system
+prompt is only reported.
+
 ### What Hermes needs
 
 The guard only sees what Hermes sends it. Every path to a model that does
@@ -214,8 +330,12 @@ All in `guard/.env`, read when the container starts.
 | `GUARD_KEY_<NAME>` | — | The key for route `<name>` (upper case, `-` as `_`). Two routes that would share a variable (`a-b`, `a_b`) stop the guard from starting. |
 | `GUARD_MODE` | `flag` | `flag`: forward everything, report findings. `block`: refuse a request whose verdict is `block` with a 403, and withhold that content when it comes again. A streamed answer is held until it has ended and then passed on or refused; in flag mode it streams through. |
 | `GUARD_UPLOAD_HOSTS` | — | Hosts the agent may upload files to, besides loopback, comma-separated; `*.corp.example` covers its subdomains. In block mode an upload (`curl -d @…`, `scp`, `rsync` …) there is reported, not refused. Every other upload, and one whose destination the guard cannot read, is refused. |
-| `GUARD_TRUST_USER` | — | `1`: in block mode, what the user typed and the system prompt are reported but never refused. For an agent only its owner can talk to (Hermes's platform allowlist): the owner is not the threat, what reaches the agent from outside is. Tool results, memory, skills, cron jobs, subagent tasks and the agent's own commands are still refused. |
-| `GUARD_POLICY` | — | Path to a JSON file overriding engine settings (`PolicySettings` in [`policy_engine.ts`](supabase/functions/_shared/policy_engine.ts)), mounted into the container; e.g. `{"pii_action": "sanitize"}` masks personal data and secrets before they reach the provider. `{"enable_tool_governance": true, "tool_denylist": ["send_email"]}` makes a call to a listed tool a `block` finding; `tool_allowlist` does the same for every tool not listed. |
+| `GUARD_TRUST_USER` | — | `1`: in block mode, what the user typed and the system prompt are reported but never refused. For an agent only its owner can talk to (Hermes's platform allowlist): the owner is not the threat, what reaches the agent from outside is. Tool results, memory, skills, cron jobs, subagent tasks and the agent's own commands are still refused. Without it, a person may be typing Hermes's markers: what they enclose is then also checked for text turned around with direction overrides. |
+| `GUARD_POLICY` | — | Path to a JSON file overriding engine settings (`PolicySettings` in [`policy_engine.ts`](supabase/functions/_shared/policy_engine.ts)), mounted into the container; e.g. `{"pii_action": "sanitize"}` masks personal data and secrets before they reach the provider — in block mode, and on the way in: a finding in the model's answer is reported, the answer is not rewritten. `"injection_action": "sanitize"` takes an injection's words out the same way. The agent keeps the text as it was and sends it again with every turn; it is masked each time and reported once. `{"enable_tool_governance": true, "tool_denylist": ["send_email"]}` makes a call to a listed tool a `block` finding; `tool_allowlist` does the same for every tool not listed. |
+| `GUARD_MODELS` | — | The models the agent may ask for, comma-separated; `deepseek-*` for every name that starts with `deepseek-`. Any other is refused, in both modes. See [Limits](#limits). |
+| `GUARD_MAX_TOKENS` | — | The most output one answer may ask for: a larger `max_tokens` or `max_completion_tokens` is lowered to it. |
+| `GUARD_RATE` | — | Requests a minute, for the whole guard; more get a 429. A value that is not a whole number above 0 stops the guard from starting, as for `GUARD_MAX_TOKENS`. |
+| `CLASSIFIER_MODEL` | ProtectAI's DeBERTa | The [trained classifier](#trained-classifier)'s model; `HF_TOKEN` for a gated one. |
 | `GUARD_PORT` | `8787` | Port. `compose.yml` publishes it on the host's `127.0.0.1` only. |
 | `GUARD_HOST` | `127.0.0.1` | Address the process listens on. The container image sets `0.0.0.0` — inside the container, so the port can be published; set it outside Docker only if other hosts are to reach the guard, which carries your provider keys and asks callers for nothing. |
 
@@ -241,7 +361,8 @@ findings, one JSON line each, in `/var/log/dlprevent-guard/verdicts.jsonl`:
 ```
 
 The most specific rule comes first: that is the reason the DLPrevent
-dashboard shows.
+dashboard shows. `"verdict":"sanitize"` goes with `"action":"forwarded"`: in
+block mode the piece went on masked, in flag mode as it came.
 
 ## When it does not work
 
@@ -253,12 +374,16 @@ dashboard shows.
 | Only the startup lines, no `POST` while the agent is used | the agent does not come through the guard: its `base_url`, an alias or fallback provider, or a session stored from before the switch | see the table in [DLPrevent → docs/HERMES.md](https://github.com/dlprevent-dev/dlprevent/blob/main/docs/HERMES.md#when-it-does-not-work) |
 | Findings on ordinary tool output (hashes, base64, code) | a version before `a9faa21` | `git pull && docker compose up -d --build` |
 | The model's *warning* about an attack is reported as the attack | a version before `e0275e4` | `git pull && docker compose up -d --build` |
+| The agent gets `403 … model_not_allowed` | the model it asked for is not in `GUARD_MODELS` — a subagent or helper task often uses another one | add it, `docker compose up -d` |
+| The agent stalls, the log shows `-> 429` and `rate_limited` | more requests a minute than `GUARD_RATE` — a busy agent with subagents makes several per turn | raise `GUARD_RATE` |
+| No `trained_classifier` finding ever, `trained classifier error` in the guard log | the classifier container is not running, or still fetching its model | `docker compose --profile classifier up -d`, `docker compose logs classifier` |
+| Block mode refuses everything, or every tool call, with `guard_scan_failed` | the scanner throws — most often on a `GUARD_POLICY` file with a value of the wrong type (a list written as a string) | `docker compose logs guard` names the error after `not scanned:`; fix the policy file, `docker compose up -d` |
 
 ## Develop
 
 ```bash
 cd guard
-deno task test          # 56 tests: extraction, agent rules, routes, end to end against fake providers
+deno task test          # 78 tests: extraction, agent rules, routes, end to end against fake providers
 ```
 
 The engine's own tests: `cd supabase/functions/_shared && deno test --allow-net --allow-read --allow-env --no-check`.
@@ -290,7 +415,8 @@ scanner, PII detection and threat-intelligence feed do the actual work here;
 their tests are in `policy_engine_attacks.test.ts`.
 
 This fork adds the proxy (`guard/server.ts`), the agent rules
-(`guard/agent_rules.ts`), the container and compose files, and this README —
+(`guard/agent_rules.ts`), the override phrases in German, French and Italian
+(`guard/languages.ts`), the container and compose files, and this README —
 also under Apache 2.0, as listed in [NOTICE](NOTICE). It is not affiliated
 with or endorsed by ANVE-AI, and "AnveGuard" is their name, used here only to
 say where the engine comes from.

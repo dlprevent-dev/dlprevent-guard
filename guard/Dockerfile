@@ -4,7 +4,7 @@
 FROM denoland/deno:2.9.7
 WORKDIR /app
 COPY supabase/functions/_shared/ supabase/functions/_shared/
-COPY guard/deno.json guard/deno.lock guard/server.ts guard/agent_rules.ts guard/
+COPY guard/deno.json guard/deno.lock guard/server.ts guard/agent_rules.ts guard/languages.ts guard/
 WORKDIR /app/guard
 # Everything the engine imports is fetched now, at build time; the running
 # container reaches nothing but the model provider. Exactly what deno.lock

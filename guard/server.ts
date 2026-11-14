@@ -15,8 +15,10 @@
 //      through). So are the tools the agent offers the model, once each:
 //      an MCP server writes their descriptions, and a poisoned one steers
 //      the model on every turn.
-//   2. GUARD_MODE=block refuses a request whose verdict is `block`;
-//      GUARD_MODE=flag (the default) forwards everything and only reports.
+//   2. GUARD_MODE=block refuses a request whose verdict is `block`, and
+//      one it could not scan;
+//      GUARD_MODE=flag (the default) forwards everything and only reports —
+//      but for what is over a limit someone set (GUARD_MODELS, GUARD_RATE).
 //   3. The model's answer is scanned as output, including the tool calls it
 //      asks for. A streamed answer is held until it has ended in block mode,
 //      then passed on or refused; in flag mode it streams through and the
@@ -30,13 +32,16 @@ import {
   aggregate,
   DEFAULT_SETTINGS,
   evaluate,
+  evaluateBehavioral,
   evaluateRetrieved,
   hasImportantTag,
+  MAX_REGEX_INPUT_LEN,
   type LayerVerdict,
   type PolicySettings,
   type Verdict,
 } from "../supabase/functions/_shared/policy_engine.ts";
 import { evaluateAgentActions } from "./agent_rules.ts";
+import { evaluateOverrides } from "./languages.ts";
 
 export type Mode = "flag" | "block";
 export type Direction = "input" | "tool_result" | "tool_definition" | "system" | "output";
@@ -49,6 +54,12 @@ export interface Piece {
   origin?: string;
   /** For an answer: the arguments of its tool calls, what it will run. */
   calls?: string;
+  /** The text as the agent sent it, where `text` leaves something out for
+   *  the scan (a compaction's turn labels): what a redaction is made of. */
+  asSent?: string;
+  /** Hermes's by its markers alone, which a person can type as well — not
+   *  in a subagent's message, which its parent wrote. */
+  marked?: boolean;
 }
 
 /** One line of the verdict log. Metadata only. */
@@ -87,7 +98,7 @@ type Json = { [k: string]: unknown };
 
 /** A piece and a way to replace its text in the request. `fresh`: it came
  *  after the model's last answer. */
-type Slot = { piece: Piece; set: (text: string) => void; fresh?: boolean };
+type Slot = { piece: Piece; set: (text: string) => void; fresh?: boolean; whole?: string };
 
 /** How deep the guard follows a nested request. Deeper is an attack on the
  *  guard's own stack, not something an agent sends. */
@@ -147,18 +158,12 @@ export function newPieces(body: Json): Piece[] {
 }
 
 function newSlots(body: Json): Slot[] {
-  const messages = (Array.isArray(body.messages) ? body.messages : []).filter((m): m is Json => !!m && typeof m === "object");
+  const messages = messagesOf(body);
   // A subagent's task is what the model wrote into delegate_task, scanned
   // already as that model's answer. Nobody typed it.
   const system = textOf(body.system) || textOf(messages.find((m) => m.role === "system")?.content);
   const child = system.startsWith(SUBAGENT);
-  let start = 0;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "assistant") {
-      start = i + 1;
-      break;
-    }
-  }
+  const start = sinceAnswer(messages);
   const out: Slot[] = [];
   for (const [i, m] of messages.entries()) {
     const from = out.length;
@@ -192,6 +197,38 @@ function newSlots(body: Json): Slot[] {
   return out.filter((s) => s.piece.text.trim().length > 0);
 }
 
+const messagesOf = (body: Json) => (Array.isArray(body.messages) ? body.messages : []).filter((m): m is Json => !!m && typeof m === "object");
+
+/** Where what came after the model's last answer starts. */
+function sinceAnswer(messages: Json[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === "assistant") return i + 1;
+  return 0;
+}
+
+/**
+ * What is new and the guard cannot read — an image, a sound, a file's
+ * bytes — counted by kind (`2 image_url, 1 document`). The model reads text
+ * in a picture as well as typed text, so it is reported: it went past every
+ * rule. Nobody typed it: data, like a document in `newSlots`.
+ */
+// ponytail: the new turns only, like `newPieces`; a session older than the
+// guard has its earlier ones unreported. OCR of the pictures if one turns up
+// with orders in it.
+function unread(body: Json): string {
+  const kinds = new Map<string, number>();
+  const walk = (v: unknown, depth = 0) => {
+    if (!v || typeof v !== "object" || depth > MAX_DEPTH) return;
+    const t = (v as Json).type;
+    // A document's source is its bytes or a link to them, see `strings`.
+    const kind = typeof t === "string" && (OPAQUE.has(t) ? t : t === "base64" || t === "url" ? "document" : undefined);
+    if (kind) kinds.set(kind, (kinds.get(kind) ?? 0) + 1);
+    else for (const x of Object.values(v)) walk(x, depth + 1);
+  };
+  const messages = messagesOf(body);
+  for (const m of messages.slice(sinceAnswer(messages))) if (m.role !== "assistant") walk(m.content);
+  return [...kinds].map(([k, n]) => `${n} ${k}`).join(", ");
+}
+
 /**
  * The system prompt: Anthropic's `system`, OpenAI's system and developer
  * messages. The operator's, but not only: an agent builds it from memory it
@@ -201,8 +238,8 @@ function newSlots(body: Json): Slot[] {
 function systemSlots(body: Json): Slot[] {
   const out: Slot[] = [];
   if (body.system !== undefined) out.push({ piece: { direction: "system", text: textOf(body.system) }, set: (t) => (body.system = t) });
-  for (const m of (Array.isArray(body.messages) ? body.messages : []) as Json[]) {
-    if (m?.role === "system" || m?.role === "developer") out.push({ piece: { direction: "system", text: textOf(m.content), origin: str(m.role) }, set: (t) => (m.content = t) });
+  for (const m of messagesOf(body)) {
+    if (m.role === "system" || m?.role === "developer") out.push({ piece: { direction: "system", text: textOf(m.content), origin: str(m.role) }, set: (t) => (m.content = t) });
   }
   return out.filter((s) => s.piece.text.trim().length > 0);
 }
@@ -282,7 +319,7 @@ const CRON = "[IMPORTANT: You are running as a scheduled cron job.";
 function userSlots(text: string, write: (text: string) => void, child = false): Slot[] {
   if (text.startsWith(COMPACTION)) {
     // Scanned without the labels; everything in it was scanned when it was new.
-    return [{ piece: { direction: "tool_result", text: text.replace(TURN_LABEL, "$1"), origin: "compaction" }, set: write }];
+    return [{ piece: { direction: "tool_result", text: text.replace(TURN_LABEL, "$1"), origin: "compaction", marked: !child, asSent: text }, set: write }];
   }
   // Odd indices are Hermes's blocks, even ones what the person typed.
   const parts = splitHermes(text);
@@ -297,14 +334,15 @@ function userSlots(text: string, write: (text: string) => void, child = false): 
   // `adversarial_suffix`, in the job and in its reviewer, every day.
   const from = typed.includes(CRON) ? "cron-job" : child ? "delegate_task" : undefined;
   const out: Slot[] = [{
-    piece: from ? { direction: "tool_result", text: typed, origin: from } : { direction: "input", text: typed },
+    // A cron job's marker is in the text; a subagent's is in the system prompt, which nobody types.
+    piece: from ? { direction: "tool_result", text: typed, origin: from, marked: !child } : { direction: "input", text: typed },
     set: (t: string) => {
       for (let i = 2; i < parts.length; i += 2) parts[i] = "";
       put(0, t);
     },
   }];
   for (let i = 1; i < parts.length; i += 2) {
-    out.push({ piece: { direction: "tool_result", text: parts[i], origin: originOf(parts[i]) }, set: (t) => put(i, t) });
+    out.push({ piece: { direction: "tool_result", text: parts[i], origin: originOf(parts[i]), marked: !child }, set: (t) => put(i, t) });
   }
   return out;
 }
@@ -324,13 +362,14 @@ function toolSlots(body: Json): Slot[] {
     const text = [def, ...params].map((h) => str(h.description)).filter((d) => d !== undefined).join("\n");
     out.push({
       piece: { direction: "tool_definition", text, origin: str(def.name) },
+      whole: JSON.stringify(def),
       set: (x) => {
         def.description = x;
         for (const h of params) delete h.description;
       },
     });
   }
-  return out.filter((s) => s.piece.text.trim().length > 0);
+  return out;
 }
 
 /** The objects in a JSON schema that carry a `description`. */
@@ -488,10 +527,41 @@ function args(v: unknown): string | undefined {
 
 // ---------- judging -------------------------------------------------------
 
+type Turn = { role: string; content: string };
+
+/** How many typed turns upstream's multi-turn rules look back. */
+const TURNS = 12;
+
+/** What a scan says of a piece: `sanitized` with the verdict `sanitize`,
+ *  the text to send on in the piece's place. */
+type Scanned = { verdict: Verdict; layers: LayerVerdict[]; sanitized?: string };
+
+/** What a scan knows of the request besides the piece itself. */
+interface Context {
+  model?: string;
+  /** The tools an answer calls. */
+  tools?: string[];
+  uploadHosts?: string[];
+  /** `GUARD_TRUST_USER`: what Hermes's markers enclose is Hermes's. */
+  trustUser?: boolean;
+  /** The request's system prompt, for an answer that recites it. */
+  system?: string;
+  /** For the newest turn a person typed: that turn and the ones before it,
+   *  oldest first. A persona or a frame built up over several turns is in
+   *  none of them alone. */
+  typed?: Turn[];
+}
+
 /** Scan one piece. Tool results go through the retrieved-content scanner
  *  on top of the ordinary input scan: instructions hidden in a web page or
  *  a file are the injection an agent actually falls for. */
-export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: string; tools?: string[]; uploadHosts?: string[] } = {}): Promise<{ verdict: Verdict; layers: LayerVerdict[] }> {
+export async function scan(p: Piece, settings: PolicySettings, ctx: Context = {}): Promise<Scanned> {
+  // Upstream's role-tag rules, `(^|\n)\s*…`, start at every line and read
+  // all the blank space after it: 400 KB of empty lines held the guard for
+  // minutes, every other request with it. A long run of blank space is read
+  // as a shorter one; it says nothing more. A piece masked in block mode goes
+  // on with it shortened too.
+  p = { ...p, text: squeeze(p.text), asSent: p.asSent === undefined ? undefined : squeeze(p.asSent) };
   const base = {
     legacy: { blocked_keywords: [], allowed_keywords: [], use_global_defaults: false },
     rules: [],
@@ -505,9 +575,27 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
     // "check the service on 127.0.0.1:8080" was refused. Reported, not
     // refused — except the cloud metadata address, where a hijacked agent
     // picks up the machine's credentials.
-    const own = r.layers.map((l) => l.rule === "egress_private_ip" && !METADATA.test(l.matched ?? "") ? { ...l, verdict: "flag" as Verdict } : l);
+    // And an answer is not rewritten — it is JSON or a stream, and what the
+    // engine redacts is prose and tool calls run together: `sanitize` is a
+    // report here, and the log says so.
+    const own = r.layers.map((l) => (l.rule === "egress_private_ip" && !METADATA.test(l.matched ?? "")) || l.verdict === "sanitize" ? { ...l, verdict: "flag" as Verdict } : l);
+    // The system prompt, word for word, in the answer (OWASP LLM07). Not
+    // refused: an agent's system prompt holds its memory and its context
+    // files, and it quotes those all day. Off with the engine's heuristics.
+    if (settings.enable_heuristics && ctx.system && recites(p.text, ctx.system)) {
+      own.push({ layer: "heuristics", rule: "system_prompt_leak", verdict: "flag", reason: "Output contains a verbatim slice of the system prompt." });
+    }
     // What the agent is about to do: upstream judges text, not commands.
-    const layers = [...own, ...evaluateAgentActions(p.text, p.calls ?? "", ctx.uploadHosts)];
+    const acts = evaluateAgentActions(p.text, p.calls ?? "", ctx.uploadHosts);
+    // A chat client fetches an image the moment it shows the answer: data in
+    // its address leaves without a click (EchoLeak). `agent_markdown_exfil`
+    // refuses 40 characters of data or more; a name or a short key is less.
+    // ponytail: inline images only — a link's preview fetches too, in some
+    // chats, and a reference-style image `![x][1]` is not read.
+    if (settings.enable_egress_filter && !acts.some((l) => l.rule === "agent_markdown_exfil") && IMAGE_QUERY.test(p.text)) {
+      own.push({ layer: "egress", rule: "markdown_image_query", verdict: "flag", reason: "Output shows an image whose address carries a query: what is in it leaves when the image loads." });
+    }
+    const layers = [...own, ...acts];
     return { verdict: layers.length ? aggregate(layers, settings) : r.verdict, layers };
   }
   // A tool result is data, not a prompt. Upstream's heuristics look for
@@ -524,7 +612,7 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
   // A system prompt is instructions by nature, like a tool description.
   const def = p.direction === "tool_definition" || p.direction === "system";
   const s = tool ? { ...settings, enable_heuristics: false, enable_behavioral: false, ...(def ? { enable_pii_detection: false } : {}) } : settings;
-  const r = await evaluate({ ...base, settings: s, text: p.text, direction: "input" }, { model: ctx.model });
+  const r = await evaluate({ ...base, settings: ctx.typed ? withoutStanding(s, ctx.typed) : s, text: p.text, direction: "input", conversation: ctx.typed }, { model: ctx.model });
   // "may not delete memory entries", "delete the context folder": in data,
   // housekeeping on memory and context, not an order to forget instructions.
   // "ASX 200 closes higher in Sydney" was refused as a jailbreak persona. A
@@ -533,10 +621,38 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
   // Reported, not refused: a reading that may be harmless still reaches the
   // log — a filter that drops it would make a bypass invisible.
   const only = (l: LayerVerdict, rule: string, re: RegExp) => l.rule === rule && l.spans?.every((s) => re.test(s.match.trim()));
-  const kept = r.layers
-    .filter((l) => !only(l, "modern_jailbreak_persona", ORDINARY_NAME))
-    .map((l) => tool && only(l, "ignore_prior_instructions", HOUSEKEEPING) ? soften(l) : l);
+  /** The exceptions above, for upstream's layers and for ours alike. */
+  const tame = (ls: LayerVerdict[]) =>
+    ls
+      .filter((l) => !only(l, "modern_jailbreak_persona", ORDINARY_NAME))
+      .map((l) => tool && only(l, "ignore_prior_instructions", HOUSEKEEPING) ? soften(l) : l);
+  // The trained classifier in shadow mode says `allow`, and an `allow` never
+  // reaches the log: what shadow mode is for went unseen. A report here.
+  const kept = tame(r.layers).map((l) => l.rule === "trained_classifier" && l.verdict === "allow" ? { ...l, verdict: "flag" as Verdict } : l);
   const layers = [...kept];
+  // The languages upstream does not read, and letters spaced out to slip
+  // past either list, with upstream's action for an injection. Nothing to
+  // redact here, so `sanitize` refuses, as upstream does without spans. Left
+  // out only where the same rule already says as much: an English sentence
+  // read as housekeeping must not take a German order down to a report.
+  if (settings.enable_injection_guard !== false) {
+    const name = (l: LayerVerdict) => l.rule?.replace(/:normalized$/, "");
+    const verdict: Verdict = settings.injection_action === "flag" ? "flag" : "block";
+    for (const l of tame(evaluateOverrides(p.text).map((l) => ({ ...l, verdict })))) {
+      if (!layers.some((k) => name(k) === name(l) && (k.verdict === "block" || k.verdict === l.verdict))) layers.push(l);
+    }
+  }
+  // Hermes's markers a person can type too, and between them a prompt was
+  // read as data: text turned around with direction overrides went through
+  // as `allow`. So where the person is not trusted, what the markers enclose
+  // is checked for those.
+  // ponytail: these characters only. Upstream's heuristics for hidden
+  // characters took `10 kΩ`, a Cyrillic name, an emoji and a phone number's
+  // direction mark for an attack, its others a hash and a script's output:
+  // a gibberish suffix or look-alike letters between markers still pass.
+  if (p.marked && !ctx.trustUser && settings.enable_heuristics && REORDERS.test(p.text)) {
+    layers.push({ layer: "heuristics", rule: "bidi_smuggling", verdict: "block", reason: "Direction overrides that show text in another order than it is read" });
+  }
   if (tool) {
     let found = evaluateRetrieved(p.text, { kind: p.direction === "tool_definition" ? "mcp_tool_desc" : "mcp_tool_result", origin: p.origin, consumer: "tool_router" });
     // "You must read a file before editing it" is what a tool description
@@ -560,32 +676,110 @@ export async function scan(p: Piece, settings: PolicySettings, ctx: { model?: st
     layers.push(...found);
   }
   // The verdict is the kept layers': upstream's counts what was filtered out.
-  return { verdict: layers.length || tool || kept.length < r.layers.length ? aggregate(layers, settings) : r.verdict, layers };
+  const verdict = layers.length || tool || kept.length < r.layers.length ? aggregate(layers, settings) : r.verdict;
+  if (verdict !== "sanitize") return { verdict, layers };
+  // What goes on in the piece's place: the engine's own redaction — of the
+  // text as the agent sent it, where the scan read it without its labels.
+  // With nothing to send on in its place, the piece is refused.
+  const sanitized = p.asSent === undefined ? r.sanitized_text : (await evaluate({ ...base, settings: s, text: p.asSent, direction: "input" }, { model: ctx.model })).sanitized_text;
+  return sanitized === undefined ? { verdict: "block", layers } : { verdict, layers, sanitized };
+}
+
+/** Whether the answer holds 60 characters of the system prompt word for
+ *  word. Upstream's `system_prompt_leak` test, which `evaluate` runs only
+ *  when given the prompt — and then its risk-trio rule takes every agent for
+ *  a privileged one and refuses a warning that names an attack and its URL.
+ *  One lookup per character here, where upstream searches the answer once
+ *  per slice: a long system prompt and a long answer took seconds. */
+function recites(answer: string, system: string): boolean {
+  const slices = new Set<string>();
+  for (let i = 0; i + 60 <= system.length; i += 20) slices.add(system.slice(i, i + 60));
+  for (let i = 0; i + 60 <= answer.length; i++) if (slices.has(answer.slice(i, i + 60))) return true;
+  return false;
+}
+
+/**
+ * The settings under which upstream's multi-turn rules name only what this
+ * turn brings. A persona that keeps coming back, or instructions flipped
+ * back and forth, stay a pattern on every turn after the one that completed
+ * it, and upstream stops at the first pattern it finds: as it stands, the
+ * same finding came with every later turn, and a primed request or a sudden
+ * long turn behind it came with none. So a pattern that holds with this
+ * turn left blank is put out of reach. Only these two can — the other rules
+ * read this turn's own words.
+ */
+function withoutStanding(settings: PolicySettings, typed: Turn[]): PolicySettings {
+  const s = { ...settings };
+  const blank = [...typed.slice(0, -1), { role: "user", content: "." }];
+  for (;;) {
+    // The thresholds as `evaluate` hands them over.
+    const rule = evaluateBehavioral(blank, {
+      churn: s.behavioral_churn_threshold,
+      persona: s.behavioral_persona_threshold,
+      encodingStep: s.behavioral_encoding_ratio_step,
+      lengthMultiplier: s.behavioral_length_multiplier,
+    })[0]?.rule;
+    if (rule === "instruction_churn" && s.behavioral_churn_threshold !== Infinity) s.behavioral_churn_threshold = Infinity;
+    else if (rule === "roleplay_escalation" && s.behavioral_persona_threshold !== Infinity) s.behavioral_persona_threshold = Infinity;
+    else return s;
+  }
 }
 
 /** A block that may be a false positive: reported, never refused. */
 const soften = (l: LayerVerdict): LayerVerdict => l.verdict === "block" ? { ...l, verdict: "flag" } : l;
 
-/** `scan`, but a piece the guard cannot scan is reported, not waved
+/** What the guard could not scan. A `block`: in block mode nothing passes
+ *  unread — whoever can make a scan throw would otherwise have a way past
+ *  every rule (pentest 11c3/vuln-0004). Flag mode forwards it like any other. */
+const FAILED: LayerVerdict = { layer: "patterns", rule: "guard_scan_failed", verdict: "block", reason: "The guard could not scan this" };
+
+/** A tool definition other than the one let through before under its name.
+ *  Reported, not refused: an agent's own tools change with an update, and
+ *  the new text is scanned like any other. */
+const CHANGED: LayerVerdict = { layer: "tool_governance", rule: "tool_definition_changed", verdict: "flag", reason: "This tool's definition changed since the guard let it through" };
+
+/** The record of a scan that threw outside any one piece. */
+const failure = (direction: Direction, blocked: boolean, model?: string, upstream?: string): Record => record({ direction, text: "" }, "block", [FAILED], blocked, model, upstream);
+
+/** `scan`, but a piece the guard cannot scan is a finding, not waved
  *  through — and the rest of the request is still scanned. */
-async function judge(p: Piece, settings: PolicySettings, ctx: { model?: string; tools?: string[]; uploadHosts?: string[] } = {}): Promise<{ verdict: Verdict; layers: LayerVerdict[] }> {
+async function judge(p: Piece, settings: PolicySettings, ctx: Context = {}): Promise<Scanned> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // A classifier that takes the request and never answers would hold every
+  // request after it: upstream's call to it has no time limit.
+  const late = new Promise<never>((_, fail) => timer = setTimeout(() => fail(new Error(`no verdict after ${SCAN_TIMEOUT} ms`)), SCAN_TIMEOUT));
   try {
-    return await scan(p, settings, ctx);
+    return await Promise.race([scan(p, settings, ctx), late]);
   } catch (e) {
     console.error(`guard: ${p.direction} not scanned:`, e instanceof Error ? e.message : e);
-    return { verdict: "flag", layers: [{ layer: "patterns", rule: "guard_scan_failed", verdict: "flag", reason: "The guard could not scan this" }] };
+    return { verdict: "block", layers: [FAILED] };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
+/** How long one piece's scan may take. The rules take milliseconds; the
+ *  trained classifier on a CPU a few hundred. */
+const SCAN_TIMEOUT = 5_000;
+
 const METADATA = /^(?:169\.254\.|fd00:ec2::254$|metadata\.google\.internal$)/i;
+
+/** Characters that show text in another order than it is read: the
+ *  overrides and isolates, not the plain direction marks a phone number or
+ *  an Arabic name carries. */
+const REORDERS = /[\u202A-\u202E\u2066-\u2069]/;
 
 const ORDINARY_NAME = /^(?:Sydney|STAN|DUDE|Cody|Machiavelli)$/;
 
 const HOUSEKEEPING = /^(?:delete|drop|erase|wipe|skip|override)\b[\s\S]*\b(?:context|memory)$/i;
 
+/** Blank space past 100 characters, read as 100: see `scan`. */
+const squeeze = (t: string) => t.replace(/\s{101,}/g, (m) => m.slice(0, 100));
+
 // Bounded repeats: with `[^)]*`, many `![](` openings and no `)` rescan the
 // rest of the text from each one.
-const TEMPLATED_IMAGE = /!\[[^[\]\n]{0,1000}\]\([^()\n]{0,2000}?(?:\{\{[^}]{1,200}\}\}|\$\{[^}]{1,200}\}|\[(?:INSERT|DATA|LEAK|CONVERSATION|MESSAGES?|SECRETS?|CONTEXT|HISTORY)[_A-Z]{0,50}\])/i;
+const IMAGE_QUERY = /!\[[^[\]\n]{0,1000}\]\(\s{0,10}<?https?:\/\/[^\s()?#<>]{1,2000}\?[^\s()#]/i;
+const TEMPLATED_IMAGE =/!\[[^[\]\n]{0,1000}\]\([^()\n]{0,2000}?(?:\{\{[^}]{1,200}\}\}|\$\{[^}]{1,200}\}|\[(?:INSERT|DATA|LEAK|CONVERSATION|MESSAGES?|SECRETS?|CONTEXT|HISTORY)[_A-Z]{0,50}\])/i;
 /** Which layer's reason an alert should lead with. The reader sees the
  *  first reason only, and upstream lists the vaguest first: "ignore all
  *  previous instructions" came out as "Persona-bypass language requesting an
@@ -658,7 +852,26 @@ export interface Config {
   uploadHosts?: string[];
   log: string;
   settings: PolicySettings;
+  /** What an agent may spend (OWASP LLM10). Kept in both modes: a limit
+   *  someone set is not a guess that may be wrong. */
+  limits?: Limits;
 }
+
+export interface Limits {
+  /** `GUARD_MODELS`: the models an agent may ask for; `deepseek-*` for every
+   *  name that starts with `deepseek-`. */
+  models?: string[];
+  /** `GUARD_MAX_TOKENS`: the most output one answer may ask for. A larger
+   *  `max_tokens` or `max_completion_tokens` is lowered to it. */
+  maxTokens?: number;
+  /** `GUARD_RATE`: requests per minute, for the whole guard. */
+  perMinute?: number;
+}
+
+const overLimit = (rule: string, reason: string): LayerVerdict => ({ layer: "patterns", rule, verdict: "block", reason });
+
+const allowed = (model: string | undefined, list: string[]) =>
+  model !== undefined && list.some((m) => (m.endsWith("*") ? model.startsWith(m.slice(0, -1)) : model === m));
 
 /** Names that would shadow a path of the APIs themselves. */
 const RESERVED = ["v1", "api", "healthz", "props", "version", "chat", "messages", "models"];
@@ -758,6 +971,21 @@ export function handler(cfg: Config, writeLog: (r: Record) => Promise<void>) {
   const tools = new Map<string, string>();
   /** Conversation pieces scanned and let through, by hash. */
   const seen = new Set<string>();
+  /** Pieces redacted before, by hash. The agent keeps the text as it was and
+   *  sends it with every later turn: reported once, redacted each time. The
+   *  guard keeps no text to put in its place, so such a piece is judged
+   *  again with every request. */
+  const masked = new Set<string>();
+  /** Each tool's definition by name, as last seen: a server that rewrites
+   *  one after it was let through is reported (OWASP ASI04, the rug pull). */
+  // ponytail: in memory like `refused` — a definition changed across a
+  // restart, or after the map was cleared when full, is not seen.
+  const defs = new Map<string, string>();
+  // ponytail: one fixed window for the whole guard, the minute on the clock —
+  // up to twice the rate across a minute's turn; per route if one agent
+  // starves another.
+  let minute = 0;
+  let used = 0;
   // A log that cannot be written must not decide what is refused.
   const write = async (r: Record) => {
     try {
@@ -788,17 +1016,31 @@ export function handler(cfg: Config, writeLog: (r: Record) => Promise<void>) {
       if (anthropic) headers.set("x-api-key", to.key);
     }
 
+    const perMinute = cfg.limits?.perMinute;
+    if (perMinute && req.method === "POST") {
+      const now = Math.floor(Date.now() / 60_000);
+      if (now !== minute) [minute, used] = [now, 0];
+      if (++used > perMinute) {
+        // Once a minute: an agent retrying would fill the log.
+        if (used === perMinute + 1) await write(record({ direction: "input", text: "" }, "block", [overLimit("rate_limited", `More than ${perMinute} requests in a minute (GUARD_RATE)`)], true, undefined, to.name));
+        return limited(anthropic, 60 - Math.floor(Date.now() / 1000) % 60);
+      }
+    }
+
     const block = cfg.mode === "block";
+    // A limit holds in both modes, and what the guard cannot read it cannot
+    // check against one either.
+    const strict = block || !!(cfg.limits?.models || cfg.limits?.maxTokens);
     const path = normalPath(to.path);
     if (req.method !== "POST" || !SCANNED.includes(path)) {
-      if (block && req.method === "POST" && UNSCANNED_MODEL.test(path)) {
+      if (strict && req.method === "POST" && UNSCANNED_MODEL.test(path)) {
         return unscannable(`${path} is not scanned; use /v1/chat/completions or /v1/messages`, anthropic);
       }
       return relay(await fetch(target, { method: req.method, headers, body: req.body, redirect: "manual" }));
     }
     // A compressed body reads as garbage; in block mode it is not let past.
     const encoded = (req.headers.get("content-encoding") ?? "identity").toLowerCase() !== "identity";
-    if (block && encoded) return unscannable("a compressed request body cannot be scanned", anthropic);
+    if (strict && encoded) return unscannable("a compressed request body cannot be scanned", anthropic);
 
     const raw = await readCapped(req);
     if (raw === undefined) {
@@ -811,27 +1053,63 @@ export function handler(cfg: Config, writeLog: (r: Record) => Promise<void>) {
       body = JSON.parse(raw);
     } catch {
       // The provider may read what JSON.parse does not (`NaN`, for one).
-      if (block) return unscannable("the request body is not JSON the guard can read", anthropic, 400);
+      if (strict) return unscannable("the request body is not JSON the guard can read", anthropic, 400);
       console.error("guard: request body not JSON, forwarded unscanned");
       return relay(await fetch(target, { method: "POST", headers, body: raw, redirect: "manual" }));
     }
     const model = str(body.model);
+    const models = cfg.limits?.models;
+    // OpenRouter falls back to the models in `models`.
+    const asked = [body.model, ...(Array.isArray(body.models) ? body.models : [])].map(str);
+    const wrong = asked.findIndex((m) => !allowed(m, models ?? []));
+    if (models && wrong >= 0) {
+      const rec = record({ direction: "input", text: "" }, "block", [overLimit("model_not_allowed", `${asked[wrong] ?? "No model"} is not in GUARD_MODELS`)], true, model, to.name);
+      await write(rec);
+      return refusal(rec, anthropic);
+    }
+    const most = cfg.limits?.maxTokens;
+    for (const k of ["max_tokens", "max_completion_tokens"]) {
+      if (most && typeof body[k] === "number" && body[k] > most) {
+        body[k] = most;
+      }
+    }
 
-    // Fail-open: a guard that throws must not take the agent down with it.
+    // A guard that throws: flag mode forwards, so it does not take the agent
+    // down with it; block mode refuses, so it is not a way past the guard.
     let blockedBy: Record | undefined;
-    let replaced = false;
+    /** The system prompt as the agent sent it, for the answer's scan. */
+    let system: string | undefined;
     try {
-      for (const { piece: p, set } of [...systemSlots(body), ...toolSlots(body)]) {
+      const prompts = systemSlots(body);
+      system = prompts.map((s) => s.piece.text).join("\n");
+      for (const { piece: p, set, whole } of [...prompts, ...toolSlots(body)]) {
+        // The whole definition: a parameter added without a word of
+        // description (`bcc`, its default an address) changes it too.
+        if (whole !== undefined && p.origin) {
+          const now = await digest({ ...p, text: whole });
+          const before = defs.get(p.origin);
+          if (defs.size >= MAX_REFUSED) defs.clear();
+          defs.set(p.origin, now);
+          if (before !== undefined && before !== now) await write(record(p, "flag", [CHANGED], false, model, to.name));
+        }
+        if (!p.text.trim()) continue;
         const hash = await digest(p);
         let why = tools.get(hash);
         if (why === undefined) {
           why = "";
-          const { verdict, layers } = await judge(p, cfg.settings, { model });
-          if (verdict !== "allow") {
-            const block = cfg.mode === "block" && verdict === "block" && !(cfg.trustUser && p.direction === "system");
-            const rec = record(p, verdict, layers, block, model, to.name);
+          const { verdict, layers, sanitized } = await judge(p, cfg.settings, { model });
+          const redact = block && sanitized !== undefined;
+          if (verdict !== "allow" && !(redact && masked.has(hash))) {
+            const refuse = block && verdict === "block" && !(cfg.trustUser && p.direction === "system");
+            const rec = record(p, verdict, layers, refuse, model, to.name);
             await write(rec);
-            if (block) why = rec.layers.map((l) => l.rule ?? l.layer).join(", ");
+            if (refuse) why = rec.layers.map((l) => l.rule ?? l.layer).join(", ");
+          }
+          if (block && sanitized !== undefined) {
+            if (masked.size >= MAX_REFUSED) masked.clear();
+            masked.add(hash);
+            set(sanitized);
+            continue;
           }
           // ponytail: same bound and restart behaviour as `refused`.
           if (tools.size >= MAX_REFUSED) tools.clear();
@@ -841,40 +1119,57 @@ export function handler(cfg: Config, writeLog: (r: Record) => Promise<void>) {
         // agent keeps working and the model is told to leave the tool alone.
         if (why) {
           set(withheldDef(p, why));
-          replaced = true;
         }
       }
-      for (const { piece: p, set, fresh } of newSlots(body)) {
+            const slots = newSlots(body);
+      // Once per request, the last few turns, each cut short: handed to every
+      // turn whole, 16 000 short ones held the guard for five seconds.
+      const typed = slots.filter((s) => s.piece.direction === "input").slice(-TURNS);
+      const turns = typed.map((s) => ({ role: "user", content: s.piece.text.slice(0, MAX_REGEX_INPUT_LEN) }));
+      for (const { piece: p, set, fresh } of slots) {
         const hash = await digest(p);
         const why = refused.get(hash);
         if (why !== undefined) {
           set(withheld(why));
-          replaced = true;
           console.log(`guard: ${p.direction} withheld, refused before: ${why}`);
           continue;
         }
         if (!fresh && seen.has(hash)) continue;
-        const { verdict, layers } = await judge(p, cfg.settings, { model });
+        const { verdict, layers, sanitized } = await judge(p, cfg.settings, { model, trustUser: cfg.trustUser, typed: p === typed.at(-1)?.piece ? turns : undefined });
         // ponytail: same bound and restart behaviour as `refused`.
-        if (seen.size >= MAX_REFUSED) seen.clear();
-        seen.add(hash);
+        if (block && sanitized !== undefined) {
+          set(sanitized);
+          if (masked.has(hash)) continue;
+          if (masked.size >= MAX_REFUSED) masked.clear();
+          masked.add(hash);
+        } else {
+          if (seen.size >= MAX_REFUSED) seen.clear();
+          seen.add(hash);
+        }
         if (verdict === "allow") continue;
-        const block = cfg.mode === "block" && verdict === "block" && !(cfg.trustUser && p.direction === "input");
-        const rec = record(p, verdict, layers, block, model, to.name);
+        const refuse = block && verdict === "block" && !(cfg.trustUser && p.direction === "input");
+        const rec = record(p, verdict, layers, refuse, model, to.name);
         await write(rec);
-        if (!block) continue;
+        if (!refuse) continue;
         if (refused.size >= MAX_REFUSED) refused.clear();
         refused.set(hash, rec.layers.map((l) => l.rule ?? l.layer).join(", "));
         blockedBy ??= rec;
       }
+      const what = unread(body);
+      if (what) await write(record({ direction: "tool_result", text: "" }, "flag", [{ layer: "patterns", rule: "unscanned_content", verdict: "flag", reason: `Not scanned: ${what}` }], false, model, to.name));
     } catch (e) {
-      console.error("guard: input scan failed, forwarding (fail-open):", e instanceof Error ? e.message : e);
+      console.error(`guard: input scan failed, ${block ? "refused" : "forwarding"}:`, e instanceof Error ? e.message : e);
+      const rec = failure("input", block, model, to.name);
+      await write(rec);
+      if (block) blockedBy ??= rec;
     }
     if (blockedBy) return refusal(blockedBy, anthropic);
 
     // A redirect goes back to the agent as it is: the guard talks to the
     // configured provider and nowhere else, not to where it points.
-    const resp = await fetch(target, { method: "POST", headers, body: replaced ? JSON.stringify(body) : raw, redirect: "manual" });
+    // The body as the guard read it, never the raw one: with a key twice in
+    // it, the guard reads the last and a provider may read the first.
+    const resp = await fetch(target, { method: "POST", headers, body: JSON.stringify(body), redirect: "manual" });
     const type = resp.headers.get("content-type") ?? "";
     if (!resp.ok || !resp.body) return relay(resp);
 
@@ -882,7 +1177,7 @@ export function handler(cfg: Config, writeLog: (r: Record) => Promise<void>) {
       if (cfg.mode === "flag") {
         // Stream to the agent at once; scan the copy when it has ended.
         const [toAgent, toScan] = resp.body.tee();
-        scanStream(toScan, cfg, model, to.name, write);
+        scanStream(toScan, cfg, { model, system }, to.name, write);
         return relay(resp, toAgent);
       }
       // Block mode: a command can only be stopped before the agent has it.
@@ -890,7 +1185,7 @@ export function handler(cfg: Config, writeLog: (r: Record) => Promise<void>) {
       // key file went through as `block forwarded`. So the whole stream is
       // held, scanned, and then passed on in one piece or refused.
       const sse = await resp.text();
-      const rec = await scanSse(sse, cfg, model, to.name, write, true);
+      const rec = await scanSse(sse, cfg, { model, system }, to.name, write, true);
       if (rec?.action === "blocked") return refusal(rec, anthropic);
       return relay(resp, sse);
     }
@@ -905,7 +1200,7 @@ export function handler(cfg: Config, writeLog: (r: Record) => Promise<void>) {
     if (parsed === undefined) {
       // A stream under another content type is still a stream.
       if (/^data:/m.test(text)) {
-        const rec = await scanSse(text, cfg, model, to.name, write, true);
+        const rec = await scanSse(text, cfg, { model, system }, to.name, write, true);
         if (rec?.action === "blocked") return refusal(rec, anthropic);
         return relay(resp, text);
       }
@@ -916,7 +1211,7 @@ export function handler(cfg: Config, writeLog: (r: Record) => Promise<void>) {
       const answer = answerOf(parsed);
       if (answer.text) {
         const p: Piece = { direction: "output", text: answer.text, calls: answer.calls };
-        const { verdict, layers } = await judge(p, cfg.settings, { model, tools: answer.tools, uploadHosts: cfg.uploadHosts });
+        const { verdict, layers } = await judge(p, cfg.settings, { model, system, tools: answer.tools, uploadHosts: cfg.uploadHosts });
         if (verdict !== "allow") {
           const block = cfg.mode === "block" && verdict === "block";
           const rec = record(p, verdict, layers, block, model, to.name);
@@ -925,35 +1220,44 @@ export function handler(cfg: Config, writeLog: (r: Record) => Promise<void>) {
         }
       }
     } catch (e) {
-      console.error("guard: output scan failed, forwarding (fail-open):", e instanceof Error ? e.message : e);
+      console.error(`guard: output scan failed, ${block ? "refused" : "forwarding"}:`, e instanceof Error ? e.message : e);
+      const rec = failure("output", block, model, to.name);
+      await write(rec);
+      if (block) return refusal(rec, anthropic);
     }
     return relay(resp, text);
   };
 }
 
-async function scanStream(stream: ReadableStream<Uint8Array>, cfg: Config, model: string | undefined, upstream: string | undefined, write: (r: Record) => Promise<void>) {
+async function scanStream(stream: ReadableStream<Uint8Array>, cfg: Config, ctx: Context, upstream: string | undefined, write: (r: Record) => Promise<void>) {
   try {
-    await scanSse(await new Response(stream).text(), cfg, model, upstream, write, false);
+    await scanSse(await new Response(stream).text(), cfg, ctx, upstream, write, false);
   } catch (e) {
-    console.error("guard: stream scan failed:", e instanceof Error ? e.message : e);
+    // It broke off: the agent has it as far as it came, and nobody read it.
+    console.error("guard: stream not read to its end, not scanned:", e instanceof Error ? e.message : e);
+    await write(failure("output", false, ctx.model, upstream));
   }
 }
 
 /** Scan a whole streamed answer. `mayBlock`: the agent does not have it yet. */
-async function scanSse(sse: string, cfg: Config, model: string | undefined, upstream: string | undefined, write: (r: Record) => Promise<void>, mayBlock: boolean): Promise<Record | undefined> {
+async function scanSse(sse: string, cfg: Config, ctx: Context, upstream: string | undefined, write: (r: Record) => Promise<void>, mayBlock: boolean): Promise<Record | undefined> {
   try {
     const c = new StreamCollector();
     c.push(sse + "\n");
     const text = c.text();
     if (!text) return;
     const p: Piece = { direction: "output", text, calls: c.calls() };
-    const { verdict, layers } = await judge(p, cfg.settings, { model, tools: c.tools, uploadHosts: cfg.uploadHosts });
+    const { verdict, layers } = await judge(p, cfg.settings, { ...ctx, tools: c.tools, uploadHosts: cfg.uploadHosts });
     if (verdict === "allow") return;
-    const rec = record(p, verdict, layers, mayBlock && cfg.mode === "block" && verdict === "block", model, upstream);
+    const rec = record(p, verdict, layers, mayBlock && cfg.mode === "block" && verdict === "block", ctx.model, upstream);
     await write(rec);
     return rec;
   } catch (e) {
-    console.error("guard: stream scan failed, forwarding (fail-open):", e instanceof Error ? e.message : e);
+    const blocked = mayBlock && cfg.mode === "block";
+    console.error(`guard: stream scan failed, ${blocked ? "refused" : "forwarding"}:`, e instanceof Error ? e.message : e);
+    const rec = failure("output", blocked, ctx.model, upstream);
+    await write(rec);
+    return rec;
   }
 }
 
@@ -964,6 +1268,13 @@ function relay(resp: Response, body?: BodyInit | null): Response {
   headers.delete("content-encoding");
   headers.delete("content-length");
   return new Response(body === undefined ? resp.body : body, { status: resp.status, statusText: resp.statusText, headers });
+}
+
+/** Over `GUARD_RATE`: the agent's SDK waits and tries again. */
+function limited(anthropic: boolean, seconds: number): Response {
+  const message = "dlprevent-guard: too many requests (GUARD_RATE)";
+  const body = anthropic ? { type: "error", error: { type: "rate_limit_error", message } } : { error: { message, type: "guard_rate_limited", code: "rate_limit_exceeded" } };
+  return new Response(JSON.stringify(body), { status: 429, headers: { "content-type": "application/json", "retry-after": String(seconds) } });
 }
 
 /** The error the agent sees, in the shape its SDK expects. */
@@ -1002,12 +1313,26 @@ if (import.meta.main) {
     console.error(`GUARD_MODE must be flag or block, not ${mode}`);
     Deno.exit(1);
   }
+  const list = (name: string) => (Deno.env.get(name) ?? "").split(",").map((h) => h.trim()).filter((h) => h.length > 0);
+  // A typo must not leave the limit off without anyone noticing.
+  const count = (name: string) => {
+    const v = Deno.env.get(name);
+    if (!v) return undefined;
+    if (!/^[1-9]\d*$/.test(v)) {
+      console.error(`${name} must be a whole number above 0, not ${v}`);
+      Deno.exit(1);
+    }
+    return Number(v);
+  };
+  const models = list("GUARD_MODELS");
+  const limits: Limits = { models: models.length ? models : undefined, maxTokens: count("GUARD_MAX_TOKENS"), perMinute: count("GUARD_RATE") };
   const cfg: Config = {
+    limits,
     routes,
     fallback,
     mode,
     trustUser: Deno.env.get("GUARD_TRUST_USER") === "1",
-    uploadHosts: (Deno.env.get("GUARD_UPLOAD_HOSTS") ?? "").split(",").map((h) => h.trim().toLowerCase()).filter((h) => h.length > 0),
+    uploadHosts: list("GUARD_UPLOAD_HOSTS").map((h) => h.toLowerCase()),
     log: Deno.env.get("GUARD_LOG") ?? "/var/log/dlprevent-guard/verdicts.jsonl",
     settings: await loadSettings(Deno.env.get("GUARD_POLICY")),
   };
@@ -1023,6 +1348,8 @@ if (import.meta.main) {
   console.log(`dlprevent-guard on ${hostname}:${port}, mode ${mode}${cfg.trustUser ? ", user trusted" : ""}, log ${cfg.log}`);
   if (fallback) console.log(`  /v1/…  -> ${fallback.url}, ${keyOf(fallback)}`);
   for (const [n, u] of Object.entries(routes)) console.log(`  /${n}/…  -> ${u.url}, ${keyOf(u)}`);
+  if (models.length) console.log(`  models: ${models.join(", ")}`);
+  if (limits.maxTokens || limits.perMinute) console.log(`  at most ${limits.maxTokens ?? "any"} tokens an answer, ${limits.perMinute ?? "any"} requests a minute`);
   const handle = handler(cfg, write);
   // One line per request: whether the agent goes through the guard at all
   // is the first thing anyone asks, and findings alone cannot answer it.
