@@ -318,6 +318,95 @@ on every route while Hermes is used — a subagent task exercises
 Step by step, with the commands, the host-side DLPrevent agent and
 hardening Hermes itself: [DLPrevent → docs/HERMES.md](https://github.com/dlprevent-dev/dlprevent/blob/main/docs/HERMES.md).
 
+## Recommended setup
+
+The defaults only report. To have the guard stop what it finds, in
+`guard/.env`:
+
+```bash
+GUARD_UPSTREAM=https://api.deepseek.com
+GUARD_UPSTREAM_KEY=sk-…                 # the only real key; the agent gets a placeholder
+GUARD_MODE=block
+GUARD_POLICY=/etc/dlprevent-guard/policy.json
+GUARD_MODELS=deepseek-*                 # every model the agent, its subagents and helper tasks use
+GUARD_MAX_TOKENS=8192
+GUARD_RATE=60
+# GUARD_TRUST_USER=1                    # only if nobody but you can talk to the agent
+```
+
+In `compose.yml`, take the `#` off the `./policy.json` line under
+`volumes:`, and put `guard/policy.json` next to it:
+
+```json
+{
+  "enable_tool_governance": true,
+  "tool_allowlist": [
+    "web_search", "web_extract", "read_file", "search_files", "write_file", "patch",
+    "terminal", "process_manage", "memory", "session_search", "todo_list",
+    "skills_list", "skill_view", "clarify", "delegate_task", "vision_analyze"
+  ],
+  "tool_denylist": ["cronjob_manage", "skill_manage", "browser_vault", "computer_use", "manage_connections"],
+  "enable_trained_classifier": true,
+  "classifier_endpoint_url": "http://classifier:8000/"
+}
+```
+
+Then `docker compose --profile classifier up -d --build` (without the
+classifier: drop its two lines from the policy and the `--profile`).
+
+**What the tool lists do.** A tool call in the model's answer to a tool not
+in `tool_allowlist`, or in `tool_denylist`, is a `block` finding: in block
+mode the answer is refused before the agent runs the call. The deny list
+wins; names are compared without regard to case. An MCP tool needs its own
+entry. The example keeps what an agent needs for its work and denies what
+outlives the conversation or reaches past it: scheduled jobs, writing its
+own skills, the browser's password vault, the desktop, account
+connections. `"tool_governance_action": "flag"` reports instead of refusing.
+
+The names above are Hermes's own on its `main` branch in November 2026;
+they change between versions and with every MCP server and plugin. To find
+yours: run a few days in flag mode with your list, then
+
+```bash
+grep tool_not_allowlisted /var/log/dlprevent-guard/verdicts.jsonl
+```
+
+— each finding's reason names the tool (`Tool "kanban_create" is not on
+the allow list`). Add what belongs to the agent's work, then switch to
+`GUARD_MODE=block`. A tool Hermes does not offer cannot be called at all:
+turning off what the agent does not need in Hermes's own tool settings is
+the first lock, this list the second.
+
+**Rolling it out.** Start in flag mode with everything above and read the
+findings for a week: false positives, missing tools, a model missing from
+`GUARD_MODELS` (`model_not_allowed`). Then `GUARD_MODE=block`. Leave the
+classifier in shadow mode while people talk to the agent in German, French
+or Italian (see [Trained classifier](#trained-classifier)).
+
+**Optional.** `"pii_action": "sanitize"` masks personal data on its way to
+the provider in block mode — and with it the address the user asked the
+agent to write to. `GUARD_UPLOAD_HOSTS` for hosts the agent deploys to.
+
+## OWASP LLM Top 10
+
+What the guard does about each of the [OWASP Top 10 for LLM applications
+2025](https://genai.owasp.org/llm-top-10/), and what it cannot. A filter
+between the agent and its model covers what passes through it; what the
+agent may do at all is decided by the agent's own configuration.
+
+| Risk | The guard | Left to you |
+|---|---|---|
+| LLM01 Prompt injection | override phrases in English, German, French and Italian, spaced letters, smuggled text, patterns over several turns; injections in tool results, tool descriptions, memory and skills; the trained classifier for paraphrases and misspellings | paraphrases pass without the classifier, and its default model is English only |
+| LLM02 Sensitive information disclosure | personal data and secrets found in both directions, masked with `"pii_action": "sanitize"`; data in image links, uploads elsewhere and a `.env` sent out refused | personal data is only reported by default |
+| LLM03 Supply chain | `deno.lock` frozen at build; the classifier's Python packages pinned | the classifier's model is fetched at its latest revision; the agent's own dependencies |
+| LLM04 Data and model poisoning | recalled memory, skills and cron output scanned as data | no training happens here |
+| LLM05 Improper output handling | tool calls read before the agent runs them: data drops, reverse shells, wipes, tampering with the guard; links to private addresses | 35 of 224 rephrasings of guard tampering tried in review pass ([Known gaps](#what-it-scans)) |
+| LLM06 Excessive agency | `tool_allowlist` / `tool_denylist`, the command rules, the provider keys kept in the guard | least privilege in the agent: its tools, approvals, sandbox, the user it runs as |
+| LLM07 System prompt leakage | an answer that recites the system prompt is reported | it is not refused: an agent quotes its own memory |
+| LLM08 Vector and embedding weaknesses | what comes back from a search is scanned as a tool result | the vector store itself |
+| LLM09 Misinformation | — | not something a filter can judge |
+| LLM10 Unbounded consumption | `GUARD_MODELS`, `GUARD_MAX_TOKENS`, `GUARD_RATE`; every scan bounded in time | provider-side spending limits |
+
 ## Configuration
 
 All in `guard/.env`, read when the container starts.
