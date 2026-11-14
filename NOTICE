@@ -10,11 +10,13 @@ are omitted.
 Changes in this fork (2026), also licensed under the Apache License,
 Version 2.0, by the DLPrevent project (info@dlprevent.ch):
 
-  - guard/server.ts, guard/agent_rules.ts, guard/server_test.ts,
-    guard/deno.json, guard/Dockerfile, guard/compose.yml, guard/.gitignore:
-    a self-contained proxy that runs AnveGuard's policy engine between an
-    AI agent and its model provider, rules for agent commands, and its
-    container.
+  - guard/server.ts, guard/agent_rules.ts, guard/languages.ts,
+    guard/server_test.ts, guard/deno.json, guard/Dockerfile,
+    guard/compose.yml, guard/.gitignore, guard/classifier.py,
+    guard/classifier.Dockerfile: a self-contained proxy that runs
+    AnveGuard's policy engine between an AI agent and its model provider,
+    rules for agent commands, override phrases in German, French and
+    Italian, its container, and a container for a trained classifier.
   - supabase/functions/_shared/policy_engine.ts: detectPII is bounded by
     MAX_REGEX_INPUT_LEN and its email pattern no longer backtracks
     quadratically; the <IMPORTANT>-tag and markdown-image checks run in

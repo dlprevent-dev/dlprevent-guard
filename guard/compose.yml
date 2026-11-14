@@ -37,6 +37,30 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
 
+  # The trained classifier, off until asked for:
+  #   docker compose --profile classifier up -d --build
+  # and in policy.json "enable_trained_classifier": true,
+  # "classifier_endpoint_url": "http://classifier:8000/" — see the README.
+  classifier:
+    profiles: [classifier]
+    build:
+      context: .
+      dockerfile: classifier.Dockerfile
+    image: dlprevent-guard-classifier:local
+    restart: unless-stopped
+    environment:
+      # Multilingual, gated: accept Meta's licence on Hugging Face and set
+      # HF_TOKEN in .env. Unset: ProtectAI's model, English only.
+      CLASSIFIER_MODEL: ${CLASSIFIER_MODEL:-protectai/deberta-v3-base-prompt-injection-v2}
+      HF_TOKEN: ${HF_TOKEN:-}
+    # No port on the host: only the guard talks to it.
+    volumes:
+      - classifier-models:/models
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
   # If Hermes runs in Docker too, it can live in this file:
   # hermes:
   #   image: <your hermes image>
@@ -44,3 +68,6 @@ services:
   #     OPENAI_BASE_URL: http://guard:8787/v1
   #   volumes:
   #     - /root/.hermes:/root/.hermes   # the DLPrevent agent reads the session logs here
+
+volumes:
+  classifier-models:

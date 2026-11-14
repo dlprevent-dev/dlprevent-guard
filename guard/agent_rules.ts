@@ -23,8 +23,9 @@ import type { LayerVerdict } from "../supabase/functions/_shared/policy_engine.t
 interface Rule {
   rule: string;
   /** Where the rule acts: `call` in tool-call arguments, `text` anywhere in
-   *  the answer. */
-  on: "call" | "text";
+   *  the answer, `command` in each argument on its own — a newline in it a
+   *  newline, another argument of the same call not part of it. */
+  on: "call" | "text" | "command";
   layer: "egress" | "tool_governance";
   verdict: "block" | "flag";
   re: Test;
@@ -108,6 +109,145 @@ const SENDS = anyOf(
   after(/\b(?:dig|nslookup|host)\b/, /\$\(/),
 );
 
+/** The commands in a script, one by one. */
+const commandsOf = (s: string) => s.split(/[\n;&|]/);
+
+/** A command's words, without the quotes around them. */
+const words = (command: string) => command.trim().split(/\s+/).map((w) => w.replace(/^["'`]+|["'`]+$/g, ""));
+
+/** `tool` and after it, in the same command, `rest`: the `-f` of a later
+ *  `rm` is not a force push. */
+const within = (tool: RegExp, rest: RegExp): Test => ({
+  test: (s) =>
+    commandsOf(s).some((command) => {
+      const m = tool.exec(command);
+      return !!m && rest.test(command.slice(m.index + m[0].length));
+    }),
+});
+
+/** All of them in one command. */
+const inOne = (...tests: Test[]): Test => ({ test: (s) => commandsOf(s).some((command) => tests.every((t) => t.test(command))) });
+
+/** All of them on one line. For `sed`, whose expression may hold a `|`. */
+const onOneLine = (...tests: Test[]): Test => ({ test: (s) => s.split("\n").some((line) => tests.every((t) => t.test(line))) });
+
+/** `then` in a command that follows, on the same line, a `cd` into a
+ *  directory `there` accepts: `cd / && rm -rf *` names no path to delete. */
+const afterCd = (there: (dir: string) => boolean, then: Test): Test => ({
+  test: (s) =>
+    s.split("\n").some((line) => {
+      let inside = false;
+      return commandsOf(line).some((command) => {
+        const cd = /^\s*cd\s+(\S+)/.exec(command);
+        if (cd) inside = there(words(cd[1])[0]);
+        return !cd && inside && then.test(command);
+      });
+    }),
+});
+
+/** Written into: by a redirect, `tee`, `sponge`, `dd of=` or a download's `-o`. */
+// The path's start is bounded: `of=of=of=…` is one word, and read to its end
+// from every `of=` in it, 240 KB of that held the guard for two minutes.
+const into = (path: RegExp) => new RegExp(String.raw`(?:>|\b(?:tee|sponge)\s+(?:-a\s+)?|\bof=|\s-o\s*)\s*["']?[^\s"'<>|;&]{0,200}?(?:${path.source})`);
+
+/** Edited where it lies. */
+const IN_PLACE = after(/\b(?:sed|perl|yq)\b/, /\s(?:-\w*i\b|--in-?place\b)/);
+
+/** A path as the kernel resolves it: `/tmp/../` and `/.` are `/`. A
+ *  relative path stays as it is. */
+function resolved(path: string): string {
+  if (!/^(?:\/|~|\$HOME|\$\{HOME\})/.test(path)) return path;
+  const [head, ...rest] = path.split("/");
+  const out: string[] = [];
+  for (const part of rest) {
+    if (part === "..") out.pop();
+    else if (part !== "" && part !== ".") out.push(part);
+  }
+  return out.length ? `${head}/${out.join("/")}` : head || "/";
+}
+
+/** The root, a home directory, a system directory or a data mount itself —
+ *  and Hermes's own home in it — not a path below one:
+ *  `rm -rf ~/projects/app/.cache` and `rm -rf /tmp/*` are everyday work. */
+const WHOLE = new RegExp(
+  String.raw`^(?:/\*?` +
+    String.raw`|(?:~|\$HOME|\$\{HOME\}|/root|/home/[^/]+)(?:/\.(?:hermes|ssh|config|local))?(?:/\.?\*)?` +
+    String.raw`|/(?:home|root|etc|var|usr|bin|sbin|lib|lib64|boot|opt|srv|mnt|media|data|proc|sys|dev|run)(?:/\*)?` +
+    String.raw`|/(?:var|usr)/(?!tmp$|tmp/|cache$|cache/)[^/]+(?:/\*)?` +
+    String.raw`|/var/lib/[^/]+(?:/\*)?)$`,
+);
+const whole = (path: string) => WHOLE.test(resolved(path));
+
+const RECURSIVE = /^-[a-zA-Z]*[rR]|^--recursive$/;
+
+/** What a tool is given, when it is in the command: its arguments, flags
+ *  among them. `tool` ends where they begin. */
+const argsOf = (tool: RegExp, command: string): string[] | undefined => {
+  const m = tool.exec(command);
+  return m ? words(command.slice(m.index + m[0].length)) : undefined;
+};
+// Not docker's `--rm`.
+const RM = /(?<![-\w])rm\s/;
+const FIND = /(?<![-\w])find\s/;
+const MV = /(?<![-\w])mv\s/;
+const CHMOD = /(?<![-\w])ch(?:mod|own|grp)\s/;
+
+/** A `find` that picks among the files it finds: old logs, not everything. */
+const PICKS = /\s-(?:i?name|i?path|i?regex|[acm]?(?:time|min)|newer\w*|size|user|group|perm)\b/;
+
+/** One of those directories deleted, moved away or made unreadable. */
+// ponytail: the directory itself only; `rm -rf ~/Documents` passes.
+const WIPES = anyOf(
+  {
+    test: (s) =>
+      commandsOf(s).some((command) => {
+        const rm = argsOf(RM, command);
+        if (rm && (rm.includes("--no-preserve-root") || (rm.some((a) => RECURSIVE.test(a)) && rm.some(whole)))) return true;
+        const find = argsOf(FIND, command);
+        if (find && whole(find[0]) && /\s-delete\b|\s-exec\s+rm\b/.test(command) && !PICKS.test(command)) return true;
+        const mv = argsOf(MV, command)?.find((a) => !a.startsWith("-"));
+        if (mv && whole(mv)) return true;
+        const ch = argsOf(CHMOD, command);
+        return !!ch && ch.some((a) => RECURSIVE.test(a)) && ch.some((a) => /^\/\*?$/.test(resolved(a)));
+      }),
+  },
+  // `rm -rf *` after a `cd` into one of them.
+  afterCd(whole, {
+    test: (command) => {
+      const rm = argsOf(RM, command);
+      return !!rm && rm.some((a) => RECURSIVE.test(a)) && rm.some((a) => /^(?:\*|\.\*?|\.\/\*?|\.\.)$/.test(a));
+    },
+  }),
+  // The files a system boots and logs in with (shadow and sudoers are credential files, above).
+  within(/(?<![-\w])(?:rm|unlink|shred|truncate|mv)\s/, /(?:^|\s)["']?\/(?:etc\/(?:passwd|group|fstab)\b|boot\/)/),
+);
+
+/** A disk as the kernel names it — not /dev/null, and not a loop device,
+ *  which is an image file being built. */
+const DISK = /\/dev\/(?:sd|nvme|vd|hd|xvd|mmcblk|disk|mapper\/|dm-|md\d)/;
+
+/** What the guard runs on and decides by: its verdict log, its policy file,
+ *  its compose file and its directory, where the README puts them. */
+const GUARD_FILES = /\/(?:etc|var\/log)\/dlprevent[\w*?-]*|dlprevent-guard\/guard\/(?:compose\.ya?ml|policy\.json)|dlprevent-guard\/?(?=["'\s]|$)/;
+
+/** Where Hermes is told which provider to talk to, and through what. */
+const HERMES_CONFIG = /\.hermes\/config\.yaml/;
+
+/** Removed, emptied or locked — reading and copying away are not. */
+const CHANGES = anyOf(/(?<![-\w])(?:rm|mv|unlink|truncate|shred|chmod|chown|chattr)\s/, IN_PLACE, within(/\bfind\b/, /\s-delete\b|\s-exec\s+rm\b/));
+
+/** A container, a service or a process stopped. */
+const STOPS = anyOf(
+  within(/\b(?:docker|podman|nerdctl)(?:-compose)?\b/, /\s(?:stop|down|kill|rm|pause)\b/),
+  /\bsystemctl\s+(?:stop|disable|mask|kill)\b|\b(?:pkill|killall|kill)\b|\bfuser\s+-\w*k|\bservice\s+\S+\s+stop\b/,
+);
+
+/** The guard by its name, its compose service, its port or its runtime. */
+const GUARD_NAME = /dlprevent|\bguard\b|(?<![\w.])8787\b|\bdeno\b/i;
+
+/** A cron or systemd directory. */
+const SCHEDULES = /\/etc\/cron|\/var\/spool\/cron|\/etc\/systemd\/system\/|\.config\/systemd\/user\//;
+
 /** The start of a command a pipe feeds: a shell or an interpreter. */
 const SHELL = /^\s*(?:sudo\s+)?(?:(?:\/usr)?\/bin\/(?:env\s+)?)?(?:(?:ba|z|da)?sh|python3?|perl|ruby|node)\b/i;
 
@@ -188,6 +328,111 @@ const RULES: Rule[] = [
     re: pipedInto(/\bbase64\s+(?:-d|--decode|-D)\b/i, SHELL),
     reason: "Decodes a hidden command and runs it",
   },
+  // What an agent is talked into besides sending data out (OWASP LLM06):
+  // `rm -rf /`, a force push, the firewall off all came back as `allow`.
+  // Read command by command in each argument (`on: "command"`): read in the
+  // call as a whole, `rm -rf node_modules` beside a `workdir` of /home/alice
+  // was a wiped home, and 16 of 113 everyday commands were refused.
+  // ponytail: a shell command by its words. A file tool that writes
+  // /etc/cron.d/x names no command, and `docker compose down` in a shell
+  // already in the guard's directory names no guard: of the reviewers' 224
+  // ways to do these things, 35 still pass. tool_allowlist in GUARD_POLICY
+  // is the way to keep an agent from tools it does not need.
+  {
+    rule: "agent_disk_wipe",
+    on: "command",
+    layer: "tool_governance",
+    verdict: "block",
+    re: anyOf(
+      WIPES,
+      into(DISK),
+      copiesAway(/(?<![-\w])(?:cp|mv|rsync)\s/, new RegExp("^" + DISK.source)),
+      within(/\b(?:mkfs(?:\.\w+)?|mke2fs|mkswap|wipefs|shred|blkdiscard|truncate)\b/, DISK),
+      within(/\bsgdisk\b/, /\s(?:--zap\S*|-Z|--delete|-d)\b/),
+      within(/\bparted\b/, /\s(?:mklabel|mkpart|rm)\b/),
+      within(/\bsfdisk\b/, /\s--delete\b/),
+      within(/\bcryptsetup\s+(?:luksFormat|erase)\b/, DISK),
+      /\b(?:lvremove|vgremove|pvremove)\b|\bz(?:pool|fs)\s+destroy\b|\bnvme\s+format\b|\bhdparm\s+--security-erase|\bbtrfs\s+subvolume\s+delete\b/,
+      // Nothing deleted, and the machine gone all the same: the fork bomb.
+      /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/,
+    ),
+    reason: "Deletes the root, a home or a system directory, or overwrites a disk",
+  },
+  {
+    // The guard is the one thing a hijacked agent must not get to decide
+    // about: whether it runs, what it logs and refuses, and whether Hermes
+    // goes through it at all.
+    rule: "agent_guard_tamper",
+    on: "command",
+    layer: "tool_governance",
+    verdict: "block",
+    re: anyOf(
+      // The provider keys: with them an agent needs no guard.
+      /dlprevent-guard\/guard\/\.env\b/,
+      // Its settings, wherever they are set.
+      /\bGUARD_(?:MODE|TRUST_USER|POLICY|UPSTREAMS?|UPSTREAM_KEY|UPLOAD_HOSTS|KEY_\w+|HOST|PORT|LOG)\s*[=:]/,
+      inOne(CHANGES, GUARD_FILES),
+      into(GUARD_FILES),
+      copiesAway(/(?<![-\w])(?:cp|install|ln|rsync)\s/, GUARD_FILES),
+      // Stopped: by name, with every other container, or what it runs on.
+      inOne(GUARD_NAME, STOPS),
+      within(/\b(?:docker|podman|nerdctl)\s+(?:stop|kill|rm)\b/, /\$\((?:docker|podman|nerdctl)\s+ps\b/),
+      /\bxargs\s+(?:-\S+\s+)*(?:docker|podman|nerdctl)\s+(?:stop|kill|rm)\b|\bsystemctl\s+(?:stop|disable|mask|kill)\s+(?:--now\s+)?(?:docker|containerd)\b|\bservice\s+docker\s+stop\b/,
+      afterCd((dir) => /\/var\/log\/dlprevent|dlprevent-guard(?:\/guard)?\/?$/.test(dir), anyOf(CHANGES, STOPS, />\s*["']?(?:\.\/)?(?:verdicts\.jsonl|policy\.json|compose\.ya?ml|\.env)/)),
+      // Around it: Hermes's config edited, replaced or removed, or its provider set.
+      onOneLine(IN_PLACE, HERMES_CONFIG),
+      inOne(CHANGES, HERMES_CONFIG),
+      into(HERMES_CONFIG),
+      copiesAway(/(?<![-\w])(?:cp|mv|install|ln|rsync)\s/, HERMES_CONFIG),
+      afterCd((dir) => /\.hermes\/?$/.test(dir), anyOf(inOne(anyOf(CHANGES, /(?<![-\w])cp\s/), /config\.yaml/), />\s*["']?(?:\.\/)?config\.yaml/)),
+      inOne(/\bhermes\s+config\s+set\b/, /base_url|api_base|api_key|provider|\b8787\b/),
+      within(/\bhermes\b/, /\s--base-url\b/),
+    ),
+    reason: "Stops the guard, changes its log or settings, reads its keys or points the agent past it",
+  },
+  {
+    rule: "agent_destructive_command",
+    on: "command",
+    layer: "tool_governance",
+    // Reported: a migration drops a table and a rebase is force-pushed in
+    // ordinary work, and the guard cannot tell which database or branch.
+    verdict: "flag",
+    re: anyOf(
+      /\b(?:DROP\s+(?:DATABASE|SCHEMA|TABLE)|TRUNCATE\s+TABLE)\b/i,
+      // --force, -f among other short flags, or a `+branch`.
+      within(/\bgit\s+push\b/, /\s(?:--force(?!-with-lease|-if-includes)\b|-[a-zA-Z]*f[a-zA-Z]*\b|\+[\w/.-])/),
+      /\bchmod\s+(?:-\w+\s+)*(?:0?777|a\+rwx)\b/,
+      { test: (s) => commandsOf(s).some((command) => /^\s*(?:sudo\s+)?(?:shutdown|reboot|poweroff|halt)\b|\bsystemctl\s+(?:poweroff|reboot|halt)\b|\binit\s+[06]\b/.test(command)) },
+    ),
+    reason: "Drops a database or table, force-pushes, opens a path to everyone, or shuts the machine down",
+  },
+  {
+    rule: "agent_defence_off",
+    on: "command",
+    layer: "tool_governance",
+    verdict: "flag",
+    re: anyOf(
+      // Case matters: iptables -F is not -f.
+      /\bufw\s+disable\b|\biptables\s+(?:-F|--flush)\b|\bnft\s+flush\s|\bsetenforce\s+0\b|\bauditctl\s+-e\s*0\b|\bhistory\s+-c\b|\bunset\s+HISTFILE\b|\bsystemctl\s+(?:stop|disable|mask)\s+(?:--now\s+)?(?:auditd|ufw|firewalld|apparmor|fail2ban)\b|\bservice\s+(?:auditd|ufw|firewalld|fail2ban)\s+stop\b/,
+      inOne(CHANGES, /\.(?:bash|zsh)_history\b/),
+      into(/\.(?:bash|zsh)_history\b/),
+    ),
+    reason: "Switches off a firewall or auditing, or clears the shell history",
+  },
+  {
+    rule: "agent_persistence",
+    on: "command",
+    layer: "tool_governance",
+    verdict: "flag",
+    re: anyOf(
+      // `crontab` run — not listed with -l, and not `man crontab`.
+      { test: (s) => commandsOf(s).some((command) => /^\s*(?:sudo\s+)?crontab\b(?!(?:\s+-u\s+\S+)?\s+-l\b)/.test(command)) },
+      // A cron file or a unit written, or copied there — not from there.
+      into(SCHEDULES),
+      copiesAway(/(?<![-\w])(?:cp|mv|install|ln)\s/, SCHEDULES),
+    ),
+    reason: "Schedules a command to run later (cron job or systemd unit)",
+  },
   {
     rule: "agent_markdown_exfil",
     on: "text",
@@ -200,7 +445,9 @@ const RULES: Rule[] = [
     // case and digits the way encoded data does, and a slug or a hash does not.
     // ponytail: hex-encoded data in a path passes; an entropy score if it matters.
     // Case-sensitive for that test, so the tag and scheme spell out both cases.
-    re: /(?:!\[[^[\]\n]{0,1000}\]\(\s*|^\s*\[[^[\]\n]{1,1000}\]:\s*|<[iI][mM][gG]\b[^>\n]{0,1000}?\b[sS][rR][cC]\s*=\s*["']?)[hH][tT][tT][pP][sS]?:\/\/[^\s)"'>]*?(?:\{\{[^}]+\}\}|\$\{[^}]+\}|=[A-Za-z0-9+\/%_-]{40,}|\/(?=[\w+%=-]*[A-Z])(?=[\w+%=-]*[a-z])(?=[\w+%=-]*\d)[\w+%=-]{40,})/m,
+    // Bounded: an address without its end searched the rest of the answer
+    // from every image in it.
+    re: /(?:!\[[^[\]\n]{0,1000}\]\(\s*|^[ \t]*\[[^[\]\n]{1,1000}\]:\s*|<[iI][mM][gG]\b[^>\n]{0,1000}?\b[sS][rR][cC]\s*=\s*["']?)[hH][tT][tT][pP][sS]?:\/\/[^\s)"'>]{0,2000}?(?:\{\{[^}]{1,200}\}\}|\$\{[^}]{1,200}\}|=[A-Za-z0-9+\/%_-]{40,}|\/(?=[\w+%=-]*[A-Z])(?=[\w+%=-]*[a-z])(?=[\w+%=-]*\d)[\w+%=-]{40,})/m,
     reason: "Image link that carries data in its URL (markdown exfiltration)",
   },
 ];
@@ -279,9 +526,11 @@ function uploadsStayHome(calls: string, allowed: string[]): boolean {
 export function evaluateAgentActions(text: string, calls: string, uploadHosts: string[] = []): LayerVerdict[] {
   const out: LayerVerdict[] = [];
   const plain = asTheShellSees(calls);
+  const each = argumentStrings(calls);
+  const commands = [each.join("\n"), each.map(asTheShellSees).join("\n")];
   const hit = (re: Test, s: string, alt?: string) => re.test(s) || (alt !== undefined && re.test(alt));
   for (const r of RULES) {
-    const [s, alt] = r.on === "call" ? [calls, plain] : [text, undefined];
+    const [s, alt] = r.on === "call" ? [calls, plain] : r.on === "command" ? commands : [text, undefined];
     if (!hit(r.re, s, alt) || (r.and && !hit(r.and, s, alt))) continue;
     // A deploy to the agent's own machine or to a host the operator named
     // is work, not exfiltration: reported, not refused.
